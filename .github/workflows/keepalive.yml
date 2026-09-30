@@ -1,0 +1,24 @@
+# Free Supabase projects pause after 7 days without activity. This pings the
+# database every 3 days so your lists stay reachable even if you don't visit.
+# Needs repo secrets SUPABASE_URL and SUPABASE_ANON_KEY (Settings → Secrets → Actions).
+name: Keep Supabase awake
+
+on:
+  schedule:
+    - cron: "0 12 */3 * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" \
+            "$SUPABASE_URL/rest/v1/lists?select=id&limit=1" \
+            -H "apikey: $SUPABASE_ANON_KEY")
+          echo "Supabase responded with HTTP $status"
+          test "$status" = "200"

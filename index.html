@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#3a0a0f">
+  <!-- iPhone "Add to Home Screen": full-screen app, own icon and name -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Reel Log">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <title>Reel Log</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Limelight&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css?v=1">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <button id="back-btn" class="back-btn" type="button" aria-label="Back" hidden>‹</button>
+        <a href="#/" class="logo">Reel Log</a>
+      </div>
+      <form id="search-form" class="search" role="search">
+        <input id="search-input" type="search" placeholder="Search films…" autocomplete="off" enterkeyhint="search" aria-label="Search films">
+      </form>
+      <nav class="nav">
+        <a href="#/lists" id="nav-lists" class="nav-link">My Lists</a>
+        <div id="auth-slot"></div>
+      </nav>
+    </div>
+  </header>
+
+  <main id="app"></main>
+
+  <footer class="footer">
+    <a href="https://www.themoviedb.org/" target="_blank" rel="noopener" class="tmdb-mark">TMDB</a>
+    <p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
+  </footer>
+
+  <dialog id="auth-dialog">
+    <form method="dialog" class="dialog-close-row"><button class="icon-btn" aria-label="Close">✕</button></form>
+    <h2>Sign in</h2>
+    <p class="muted small">Your lists sync between your phone and computer.</p>
+    <form id="auth-form" class="stack-form">
+      <input id="auth-email" type="email" placeholder="Email" autocomplete="email" required>
+      <input id="auth-password" type="password" placeholder="Password" autocomplete="current-password" required>
+      <button type="submit" id="auth-submit" class="btn btn-accent full">Sign in</button>
+    </form>
+    <p id="auth-error" class="error small" hidden></p>
+  </dialog>
+
+  <script type="module" src="js/app.js?v=1"></script>
+</body>
+</html>
