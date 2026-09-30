@@ -1,0 +1,16 @@
+{
+  "name": "reel-log",
+  "private": true,
+  "type": "module",
+  "description": "Personal Letterboxd-style movie site. TypeScript in src/, compiled to js/ for GitHub Pages.",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "serve": "python3 -m http.server 8000"
+  },
+  "devDependencies": {
+    "@supabase/supabase-js": "2.117.2",
+    "typescript": "^7.0.2"
+  }
+}

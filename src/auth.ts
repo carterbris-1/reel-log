@@ -1,22 +1,25 @@
+import type { User } from "@supabase/supabase-js";
 import { supabase, dbConfigured } from "./db.js";
-import { esc, toast } from "./ui.js";
+import { byId, esc, find, toast } from "./ui.js";
 
-let user = null;
-export const currentUser = () => user;
+let user: User | null = null;
+export const currentUser = (): User | null => user;
 
-const dialog = document.getElementById("auth-dialog");
-const form = document.getElementById("auth-form");
-const errorEl = document.getElementById("auth-error");
-const submit = document.getElementById("auth-submit");
-const slot = document.getElementById("auth-slot");
+const dialog = byId<HTMLDialogElement>("auth-dialog");
+const form = byId<HTMLFormElement>("auth-form");
+const errorEl = byId("auth-error");
+const submit = byId<HTMLButtonElement>("auth-submit");
+const slot = byId("auth-slot");
+const emailInput = byId<HTMLInputElement>("auth-email");
+const passwordInput = byId<HTMLInputElement>("auth-password");
 
-export function openSignIn() {
+export function openSignIn(): void {
   errorEl.hidden = true;
   form.reset();
   dialog.showModal();
 }
 
-function renderSlot() {
+function renderSlot(): void {
   if (!dbConfigured) {
     slot.innerHTML = "";
   } else if (user) {
@@ -24,25 +27,26 @@ function renderSlot() {
     slot.innerHTML = `
       <span class="avatar" title="${esc(user.email)}">${esc(initial)}</span>
       <button class="btn btn-sm" id="sign-out">Sign out</button>`;
-    slot.querySelector("#sign-out").addEventListener("click", async () => {
+    find(slot, "#sign-out").addEventListener("click", async () => {
       // "local" signs out this device only. Supabase's default ("global") would also
       // end the session on your other devices.
-      await supabase.auth.signOut({ scope: "local" });
+      await supabase?.auth.signOut({ scope: "local" });
       toast("Signed out");
     });
   } else {
     slot.innerHTML = `<button class="btn btn-sm btn-accent" id="sign-in">Sign in</button>`;
-    slot.querySelector("#sign-in").addEventListener("click", openSignIn);
+    find(slot, "#sign-in").addEventListener("click", openSignIn);
   }
 }
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
+  if (!supabase) return;
   submit.disabled = true;
   errorEl.hidden = true;
   const { error } = await supabase.auth.signInWithPassword({
-    email: document.getElementById("auth-email").value.trim(),
-    password: document.getElementById("auth-password").value,
+    email: emailInput.value.trim(),
+    password: passwordInput.value,
   });
   submit.disabled = false;
   if (error) {
@@ -59,8 +63,8 @@ form.addEventListener("submit", async (e) => {
  * Restores the saved session, then calls onChange whenever the signed-in user changes
  * (sign in / sign out, including from another tab).
  */
-export async function initAuth(onChange) {
-  if (!dbConfigured) {
+export async function initAuth(onChange: () => void): Promise<void> {
+  if (!supabase) {
     renderSlot();
     return;
   }

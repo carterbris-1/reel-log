@@ -1,0 +1,8 @@
+# Installed packages (npm install recreates them)
+node_modules/
+
+# Compiled output: built from src/ by `npm run build`, and by GitHub Actions on deploy
+js/
+_site/
+
+.DS_Store

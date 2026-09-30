@@ -1,7 +1,7 @@
 import { tmdbConfigured } from "./tmdb.js";
 import { dbConfigured } from "./db.js";
 import { initAuth } from "./auth.js";
-import { esc, loadingHTML, noticeHTML } from "./ui.js";
+import { byId, errorMessage, esc, loadingHTML, noticeHTML } from "./ui.js";
 import { isStandalone } from "./ios.js";
 import { homeView } from "./views/home.js";
 import { searchView } from "./views/search.js";
@@ -9,14 +9,19 @@ import { movieView } from "./views/movie.js";
 import { personView } from "./views/person.js";
 import { listsView } from "./views/lists.js";
 import { listView } from "./views/list.js";
+import type { ViewContext } from "./types.js";
 
-const app = document.getElementById("app");
-const searchInput = document.getElementById("search-input");
-const navLists = document.getElementById("nav-lists");
-const backBtn = document.getElementById("back-btn");
+const app = byId("app");
+const searchInput = byId<HTMLInputElement>("search-input");
+const navLists = byId("nav-lists");
+const backBtn = byId<HTMLButtonElement>("back-btn");
 
-// [pattern, view, needs] — `needs` says which config the view can't run without.
-const routes = [
+type View = (ctx: ViewContext, match: RegExpMatchArray) => Promise<void>;
+/** Which config a view can't run without. */
+type Needs = "tmdb" | "db";
+
+// [pattern, view, needs] — capture groups in the pattern arrive as match[1], match[2]…
+const routes: [RegExp, View, Needs][] = [
   [/^$/, (ctx) => homeView(ctx), "tmdb"],
   [/^search\/(.+)$/, (ctx, m) => searchView(ctx, decodeURIComponent(m[1])), "tmdb"],
   [/^movie\/(\d+)$/, (ctx, m) => movieView(ctx, Number(m[1])), "tmdb"],
@@ -25,14 +30,14 @@ const routes = [
   [/^list\/([0-9a-f-]{36})$/, (ctx, m) => listView(ctx, m[1]), "db"],
 ];
 
-const SETUP = {
+const SETUP: Record<Needs, string> = {
   tmdb: noticeHTML(
     "Almost there — add a TMDB key",
-    "Put your TMDB API key in <code>config.js</code> to search films. See README.md.",
+    "Put your TMDB API key in <code>src/config.ts</code>, then run <code>npm run build</code>. See README.md.",
   ),
   db: noticeHTML(
     "Lists need Supabase",
-    "Add your Supabase URL and anon key to <code>config.js</code>. See README.md.",
+    "Add your Supabase URL and key to <code>src/config.ts</code>, then run <code>npm run build</code>. See README.md.",
   ),
 };
 
@@ -42,8 +47,8 @@ const SETUP = {
 // an index in history.state so we know whether "back" stays inside the app.
 let historyIndex = -1;
 
-function trackHistory() {
-  const idx = history.state?.idx;
+function trackHistory(): void {
+  const idx: unknown = history.state?.idx;
   if (typeof idx === "number") {
     historyIndex = idx; // back/forward/reload onto an entry we've already numbered
   } else {
@@ -61,7 +66,7 @@ backBtn.addEventListener("click", () => {
 // replaced (fast typing, quick back/forward) check `current()` and bail out.
 let renderToken = 0;
 
-async function render({ keepScroll = false } = {}) {
+async function render({ keepScroll = false } = {}): Promise<void> {
   const token = ++renderToken;
   const rawPath = location.hash.replace(/^#\/?/, "");
 
@@ -77,10 +82,9 @@ async function render({ keepScroll = false } = {}) {
     }
   }
 
-  const ctx = {
+  const ctx: ViewContext = {
     el: app,
     current: () => token === renderToken,
-    /** Replace the page content, unless a newer render has started. */
     show(html) {
       if (token !== renderToken) return false;
       app.innerHTML = html;
@@ -92,21 +96,31 @@ async function render({ keepScroll = false } = {}) {
   if (!keepScroll) window.scrollTo(0, 0);
 
   const route = routes.find(([pattern]) => pattern.test(rawPath));
-  if (!route) return ctx.show(noticeHTML("Page not found", `<a class="link-btn" href="#/">Go home</a>`));
+  if (!route) {
+    ctx.show(noticeHTML("Page not found", `<a class="link-btn" href="#/">Go home</a>`));
+    return;
+  }
 
   const [pattern, view, needs] = route;
-  if (needs === "tmdb" && !tmdbConfigured) return ctx.show(SETUP.tmdb);
-  if (needs === "db" && !dbConfigured) return ctx.show(SETUP.db);
+  if (needs === "tmdb" && !tmdbConfigured) {
+    ctx.show(SETUP.tmdb);
+    return;
+  }
+  if (needs === "db" && !dbConfigured) {
+    ctx.show(SETUP.db);
+    return;
+  }
 
   if (!keepScroll) ctx.show(loadingHTML());
   try {
-    await view(ctx, rawPath.match(pattern));
+    // The route was found with this same pattern, so match() can't be null here.
+    await view(ctx, rawPath.match(pattern) as RegExpMatchArray);
   } catch (err) {
     console.error(err);
     ctx.show(
       noticeHTML(
         "Something went wrong",
-        esc(err.message),
+        esc(errorMessage(err)),
         `<button class="btn" data-action="retry">Try again</button>`,
       ),
     );
@@ -114,13 +128,13 @@ async function render({ keepScroll = false } = {}) {
 }
 
 app.addEventListener("click", (e) => {
-  if (e.target.closest("[data-action=retry]")) render();
+  if ((e.target as Element).closest("[data-action=retry]")) render();
 });
 
 // ── Header search: Enter searches now; typing searches after a pause ──────────
-let searchTimer;
+let searchTimer: number | undefined;
 
-function runSearch() {
+function runSearch(): void {
   clearTimeout(searchTimer);
   const q = searchInput.value.trim();
   if (!q) return;
@@ -140,7 +154,7 @@ searchInput.addEventListener("input", () => {
   searchTimer = setTimeout(runSearch, 350);
 });
 
-document.getElementById("search-form").addEventListener("submit", (e) => {
+byId<HTMLFormElement>("search-form").addEventListener("submit", (e) => {
   e.preventDefault();
   runSearch();
   searchInput.blur(); // closes the phone keyboard

@@ -1,10 +1,11 @@
 import { tmdb } from "../tmdb.js";
-import { esc, loadingHTML, noticeHTML, posterCard, toast } from "../ui.js";
+import { errorMessage, esc, find, loadingHTML, noticeHTML, posterCard, toast } from "../ui.js";
+import type { Movie, Paged, ViewContext } from "../types.js";
 
-const searchPage = (query, page) =>
-  tmdb("/search/movie", { query, page, include_adult: "false" });
+const searchPage = (query: string, page: number) =>
+  tmdb<Paged<Movie>>("/search/movie", { query, page, include_adult: "false" });
 
-export async function searchView(ctx, query) {
+export async function searchView(ctx: ViewContext, query: string): Promise<void> {
   const first = await searchPage(query, 1);
 
   if (!first.results.length) {
@@ -12,8 +13,8 @@ export async function searchView(ctx, query) {
     return;
   }
 
-  const shown = new Set();
-  const cards = (results) =>
+  const shown = new Set<number>();
+  const cards = (results: Movie[]) =>
     results
       .filter((m) => !shown.has(m.id) && shown.add(m.id)) // TMDB pages can overlap
       .map((m) => posterCard(m))
@@ -25,8 +26,8 @@ export async function searchView(ctx, query) {
     <div class="grid" id="results">${cards(first.results)}</div>
     <div class="more-row" id="more-row"></div>`)) return;
 
-  const grid = ctx.el.querySelector("#results");
-  const moreRow = ctx.el.querySelector("#more-row");
+  const grid = find(ctx.el, "#results");
+  const moreRow = find(ctx.el, "#more-row");
   let page = 1;
 
   const renderMore = () => {
@@ -36,7 +37,7 @@ export async function searchView(ctx, query) {
   renderMore();
 
   moreRow.addEventListener("click", async (e) => {
-    if (!e.target.closest("#more")) return;
+    if (!(e.target as Element).closest("#more")) return;
     moreRow.innerHTML = loadingHTML(true);
     try {
       const next = await searchPage(query, page + 1);
@@ -44,7 +45,7 @@ export async function searchView(ctx, query) {
       page += 1;
       grid.insertAdjacentHTML("beforeend", cards(next.results));
     } catch (err) {
-      toast(err.message);
+      toast(errorMessage(err));
     }
     if (ctx.current()) renderMore();
   });

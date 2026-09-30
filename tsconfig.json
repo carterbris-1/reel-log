@@ -1,0 +1,23 @@
+{
+  // TypeScript lives in src/ and compiles to plain ES modules in js/, which is what
+  // index.html loads. There is no bundler: each .ts file becomes one .js file.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+
+    "rootDir": "src",
+    "outDir": "js",
+    "sourceMap": true,
+    "inlineSources": true,
+
+    "strict": true,
+    "noEmitOnError": true,
+    "verbatimModuleSyntax": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true
+  },
+  "include": ["src"]
+}

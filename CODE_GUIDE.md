@@ -3,6 +3,11 @@
 A file-by-file walkthrough of everything in this project: what each file does, how the
 pieces connect, and worked examples for the parts that aren't obvious.
 
+The code is **TypeScript**. You edit `src/*.ts`; the compiler writes plain JavaScript to
+`js/*.js`, which is what the browser runs. §3b explains the build, and
+`TYPESCRIPT_MIGRATION.md` records exactly what changed when the project switched from
+JavaScript.
+
 It also records *why* things were built this way: the design decisions (§12) and the
 known limits and gotchas (§13). For setup steps, see `README.md`.
 
@@ -12,11 +17,12 @@ known limits and gotchas (§13). For setup steps, see `README.md`.
 
 1. [The big picture](#1-the-big-picture)
 2. [File map](#2-file-map)
-3. [Root files](#3-root-files) — `index.html`, `config.js`, `styles.css`, `.nojekyll`, `manifest.webmanifest`, `icons/`
-4. [Core JavaScript](#4-core-javascript) — `app.js`, `tmdb.js`, `db.js`, `auth.js`, `ui.js`, `ios.js`
+3. [Root files](#3-root-files) — `index.html`, `src/config.ts`, `styles.css`, `manifest.webmanifest`, `icons/`
+3b. [TypeScript and the build](#3b-typescript-and-the-build) — `package.json`, `tsconfig.json`, `src/types.ts`, `deploy.yml`, `.gitignore`
+4. [Core code](#4-core-code) — `app.ts`, `tmdb.ts`, `db.ts`, `auth.ts`, `ui.ts`, `ios.ts`
 5. [Views](#5-views) — home, search, movie, person, lists, list
-6. [The wheel](#6-the-wheel--jswheeljs) — `wheel.js`
-7. [Backend & automation](#7-backend--automation) — `schema.sql`, `keepalive.yml`
+6. [The wheel](#6-the-wheel--srcwheelts) — `wheel.ts`
+7. [Backend & automation](#7-backend--automation) — `schema.sql`, `keepalive.yml` (`deploy.yml` is in §3b)
 8. [Docs](#8-docs) — `README.md`, this file
 9. [Walkthroughs: what happens when…](#9-walkthroughs-what-happens-when)
 10. [How to extend it](#10-how-to-extend-it)
@@ -35,7 +41,8 @@ dynamic happens in your browser, talking directly to two outside services:
 ```
                        ┌──────────────────────────────┐
                        │  GitHub Pages                │
-                       │  (serves index.html, css, js)│
+                       │  (serves index.html, css, and│
+                       │   js/ compiled from src/*.ts)│
                        └──────────────┬───────────────┘
                                       │ page load
                                       ▼
@@ -49,7 +56,7 @@ dynamic happens in your browser, talking directly to two outside services:
 │    js/views/*   js/auth.js          js/wheel.js                 │
 │     │      │        │                                           │
 │     ▼      ▼        ▼                                           │
-│  js/tmdb.js   js/db.js ◄── supabase-js library (from CDN)       │
+│  js/tmdb.js   js/db.js ◄── supabase-js (CDN, via import map)    │
 └─────┬──────────────┬────────────────────────────────────────────┘
       │              │
       ▼              ▼
@@ -61,6 +68,8 @@ dynamic happens in your browser, talking directly to two outside services:
 └───────────┘  └─────────────────────────────────────┘
 ```
 
+- **The diagram shows `js/` files** because that's what the browser runs. Each one is
+  compiled from the `.ts` file of the same name in `src/`.
 - **TMDB** gives us everything about movies: search results, posters, cast, release dates.
   We never store movie data ourselves (except a tiny snapshot in lists — see §7).
 - **Supabase** gives us sign-in and a database. Because your lists live there (not in the
@@ -77,46 +86,56 @@ dynamic happens in your browser, talking directly to two outside services:
 Movie/
 ├── index.html                  Page shell: header, <main>, footer, sign-in dialog
 ├── styles.css                  The whole theater theme + responsive layout
-├── config.js                   Your keys (TMDB, Supabase) — the only file you edit to set up
-├── .nojekyll                   Tells GitHub Pages "don't process this site"
+├── package.json                npm scripts (build/watch/typecheck/serve) + TypeScript version
+├── package-lock.json           Exact installed versions (npm writes this; don't edit)
+├── tsconfig.json               TypeScript compiler settings: src/ → js/, strict checks
+├── .gitignore                  Keeps node_modules/ and the compiled js/ out of git
 ├── manifest.webmanifest        Home Screen app name, colours, icons
 ├── icons/                      App icons (film reel): 180px iPhone, 192px, 512px
-├── js/
-│   ├── app.js                  Entry point: router, header search, render tokens
-│   ├── tmdb.js                 TMDB fetch wrapper + image URL helper
-│   ├── db.js                   Supabase client + every database query
-│   ├── auth.js                 Sign-in dialog, header avatar, session tracking
-│   ├── ui.js                   Shared HTML helpers: escaping, poster cards, toasts
-│   ├── wheel.js                "Randomize" spinning wheel
-│   ├── ios.js                  iPhone detection + "Add to Home Screen" tip
+├── src/                        ✏️ THE CODE YOU EDIT (TypeScript)
+│   ├── config.ts               Your keys (TMDB, Supabase) — the only file you edit to set up
+│   ├── types.ts                Shapes of TMDB + database data, and the view context
+│   ├── app.ts                  Entry point: router, header search, render tokens
+│   ├── tmdb.ts                 TMDB fetch wrapper + image URL helper
+│   ├── db.ts                   Supabase client + every database query
+│   ├── auth.ts                 Sign-in dialog, header avatar, session tracking
+│   ├── ui.ts                   Shared HTML helpers: escaping, poster cards, toasts, DOM lookups
+│   ├── wheel.ts                "Randomize" spinning wheel
+│   ├── ios.ts                  iPhone detection + "Add to Home Screen" tip
 │   └── views/
-│       ├── home.js             Trending films wall
-│       ├── search.js           Search results + "Load more"
-│       ├── movie.js            Movie detail + "Add to list" panel
-│       ├── person.js           Actor/director page + filmography
-│       ├── lists.js            "My Lists" overview + create form
-│       └── list.js             One list: posters, remove, rename, delete, wheel
+│       ├── home.ts             Trending films wall
+│       ├── search.ts           Search results + "Load more"
+│       ├── movie.ts            Movie detail + "Add to list" panel
+│       ├── person.ts           Actor/director page + filmography
+│       ├── lists.ts            "My Lists" overview + create form
+│       └── list.ts             One list: posters, remove, rename, delete, wheel
+├── js/                         ⚙️ GENERATED by `npm run build` — never edit, not in git
+│   └── (one .js + .js.map per src/ file)
 ├── supabase/
 │   └── schema.sql              Database tables + security rules (run once)
 ├── .github/workflows/
+│   ├── deploy.yml              On every push: type-check, compile, publish to Pages
 │   └── keepalive.yml           Pings Supabase every 3 days so it doesn't pause
 ├── README.md                   Setup instructions
-└── CODE_GUIDE.md               This file
+├── CODE_GUIDE.md               This file
+└── TYPESCRIPT_MIGRATION.md     Record of the JavaScript → TypeScript switch
 ```
 
-**Dependency direction** (who imports whom) — arrows point at the thing being imported:
+**Dependency direction** (who imports whom) — arrows point at the thing being imported.
+Almost every file also imports *types* from `types.ts` (`import type …`), which vanish
+when compiled, so they're left off the chart:
 
 ```
-app.js ──► views/*.js ──► tmdb.js ──► config.js
-   │           │    └───► db.js ────► config.js, supabase-js (CDN)
-   │           ├────────► auth.js ──► db.js, ui.js
-   │           ├────────► ui.js ────► tmdb.js
-   │           ├────────► wheel.js ─► ui.js   (list.js, lists.js)
-   │           └────────► ios.js               (lists.js)
-   └──► auth.js, tmdb.js, db.js, ui.js, ios.js
+app.ts ──► views/*.ts ──► tmdb.ts ──► config.ts
+   │           │    └───► db.ts ────► config.ts, supabase-js (CDN)
+   │           ├────────► auth.ts ──► db.ts, ui.ts
+   │           ├────────► ui.ts ────► tmdb.ts
+   │           ├────────► wheel.ts ─► ui.ts   (list.ts, lists.ts)
+   │           └────────► ios.ts               (lists.ts)
+   └──► auth.ts, tmdb.ts, db.ts, ui.ts, ios.ts
 ```
 
-Nothing imports `app.js`, which keeps the graph free of cycles.
+Nothing imports `app.ts`, which keeps the graph free of cycles.
 
 ---
 
@@ -134,24 +153,30 @@ the contents of `<main id="app">` for each "page".
 | `apple-mobile-web-app-*` metas | Make "Add to Home Screen" on iOS open full-screen, like an app, named "Reel Log" |
 | `apple-touch-icon`, `manifest` links | The film-reel icon on the Home Screen (iOS uses the 180px PNG; Android and desktop Chrome read the manifest) |
 | `format-detection` | Stops iOS turning numbers (like years or runtimes) into tappable phone links |
-| `.brand` → `#back-btn` | A ‹ Back button, hidden except in the iPhone Home Screen app (see `app.js`) |
+| `.brand` → `#back-btn` | A ‹ Back button, hidden except in the iPhone Home Screen app (see `app.ts`) |
 | Google Fonts link | Loads **Limelight** (art-deco marquee titles), **Bebas Neue** (tall poster lettering for headings/buttons), **Inter** (body text) |
-| `styles.css?v=1` | The `?v=1` is a cache-buster: bump it to `?v=2` after changes so phones fetch the new file |
-| `<header class="topbar">` | Logo, search box, "My Lists" link, and `#auth-slot` (filled in by `auth.js` with Sign in / avatar + Sign out) |
+| `styles.css?v=2` | The `?v=` is a cache-buster: bump the number after changes so phones fetch the new file |
+| `<header class="topbar">` | Logo, search box, "My Lists" link, and `#auth-slot` (filled in by `auth.ts` with Sign in / avatar + Sign out) |
 | `<main id="app">` | Empty — every view renders into here |
 | `<footer class="footer">` | TMDB attribution (required by TMDB's terms), styled as red carpet |
 | `<dialog id="auth-dialog">` | The sign-in popup. `<form method="dialog">` around the ✕ button means clicking it closes the dialog with no JavaScript |
-| `<script type="module" src="js/app.js?v=1">` | Starts everything. `type="module"` enables `import`/`export` and top-level `await` |
+| `<script type="importmap">` | Tells the browser where `"@supabase/supabase-js"` lives (the jsDelivr CDN, pinned to 2.117.2). See §3b |
+| `<script type="module" src="js/app.js?v=2">` | Starts everything. It loads the **compiled** `src/app.ts`, not `src/app.ts`. `type="module"` enables `import`/`export` and top-level `await` |
 
-### `config.js` — your keys
+### `src/config.ts` — your keys
 
 The only file you need to edit to set up the site. Three values:
 
-```js
-export const TMDB_API_KEY = "YOUR_TMDB_API_KEY";
-export const SUPABASE_URL = "https://YOUR_PROJECT.supabase.co";
-export const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
+```ts
+export const TMDB_API_KEY: string = "YOUR_TMDB_API_KEY";
+export const SUPABASE_URL: string = "https://YOUR_PROJECT.supabase.co";
+export const SUPABASE_ANON_KEY: string = "YOUR_SUPABASE_ANON_KEY";
 ```
+
+`: string` tells TypeScript these are ordinary strings. Without it, TypeScript would
+treat each as the one exact piece of text written there. After editing, run
+`npm run build`, or keep `npm run watch` running, so `src/config.ts` picks up the change.
+On GitHub the deploy workflow compiles it for you.
 
 **"Isn't it bad to put keys in a public file?"** Not these ones:
 
@@ -164,7 +189,7 @@ export const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
   go in this file (there's a warning comment saying so).
 
 While the placeholders (`YOUR_…`) are still there, the site doesn't crash. It shows a
-friendly "add your key" notice instead. `tmdb.js` and `db.js` detect the placeholders.
+friendly "add your key" notice instead. `tmdb.ts` and `db.ts` detect the placeholders.
 
 ### `styles.css` — the movie-palace theme
 
@@ -287,16 +312,172 @@ The manifest tells browsers how to install the site as an app:
   round crop doesn't clip it). The icons fill the whole square, because iOS adds its own
   rounded corners and would show transparency as black.
 
-### `.nojekyll`
-
-An empty file. By default GitHub Pages runs sites through Jekyll, which can ignore or
-rewrite some files. This tells it to serve the files exactly as they are.
+> **`.nojekyll` was removed.** It told GitHub Pages to skip its Jekyll processing
+> step. The site is now published by the `deploy.yml` workflow, which never runs
+> Jekyll, so the file had nothing left to do.
 
 ---
 
-## 4. Core JavaScript
+## 3b. TypeScript and the build
 
-### `js/app.js` — the entry point and router
+### How it fits together
+
+```
+ you edit              npm run build / watch            browser loads
+┌──────────────┐        (tsc, the TypeScript         ┌──────────────┐
+│ src/app.ts   │ ─────► compiler: checks types, ───► │ src/app.ts    │
+│ src/db.ts    │        then strips them out)        │ src/db.ts     │
+│ src/views/…  │                                     │ js/views/…   │
+└──────────────┘                                     └──────────────┘
+```
+
+- **One `.ts` file becomes one `.js` file** with the same name and folder. There's no
+  bundler (like Vite or webpack) combining files. `tsc` just removes the type
+  annotations and writes each file out.
+- **Imports keep saying `.js`**, even inside `.ts` files: `import { tmdb } from "./tmdb.js"`.
+  That's deliberate. The import is written for the *compiled* file the browser will
+  fetch. TypeScript knows `./tmdb.js` means `src/tmdb.ts` while it checks types.
+- **Type-only imports use `import type`**: `import type { Movie } from "./types.js"`.
+  They are erased completely, so the browser never downloads `types.ts` for them.
+- **`.js.map` source maps** are written next to each file. In browser dev tools, errors
+  and breakpoints show your original TypeScript lines, not the compiled output.
+
+### `package.json`: the project's toolbox
+
+```json
+"scripts": {
+  "build": "tsc",              // compile once
+  "watch": "tsc --watch",      // compile on every save
+  "typecheck": "tsc --noEmit", // check only, write nothing
+  "serve": "python3 -m http.server 8000"
+},
+"devDependencies": {
+  "@supabase/supabase-js": "2.117.2",   // types only (see the import map below)
+  "typescript": "^7.0.2"
+}
+```
+
+"devDependencies" means these are only needed to *build* the site. None of it is
+shipped to the browser. `npm install` downloads them into `node_modules/`, and
+`package-lock.json` records exact versions so GitHub's build uses the same ones.
+
+### `tsconfig.json`: compiler settings
+
+| Setting | Value | Why |
+|---|---|---|
+| `rootDir` / `outDir` | `src` → `js` | Where TypeScript reads from and writes to. `js/` keeps the old path, so `index.html` barely changed |
+| `target` / `module` | `ES2022` | Modern JavaScript with `import`/`export` and top-level `await`, which every current browser (including iOS Safari) runs |
+| `moduleResolution` | `bundler` | Lets imports say `./tmdb.js` while checking `tmdb.ts`, and finds Supabase's types in `node_modules` |
+| `lib` | `ES2022, DOM, DOM.Iterable` | Browser APIs (`document`, `fetch`, `localStorage`…) are known to TypeScript |
+| `types` | `[]` | Don't pull in Node.js types. This code runs in a browser, so `setTimeout` returns a number, not a Node timer |
+| `strict` | `true` | The full set of safety checks: no implicit `any`, and `null` must be handled (see below) |
+| `noEmitOnError` | `true` | If there's any type error, write **nothing**. A broken build can't half-update `js/` |
+| `verbatimModuleSyntax` | `true` | Forces `import type` for type-only imports, so it's obvious what exists at runtime |
+| `sourceMap` + `inlineSources` | `true` | Dev tools show your TypeScript source, even on the live site |
+| `skipLibCheck` | `true` | Don't re-check the Supabase library's own type files. Faster, and not our code |
+
+### What `strict` made the code do
+
+Strict mode insists every "might be missing" case is handled. The main patterns:
+
+```ts
+// 1. Elements that index.html always has: byId() fails loudly if one goes missing
+const searchInput = byId<HTMLInputElement>("search-input");
+
+// 2. Elements a view just rendered: find() does the same inside a container
+const spinBtn = find<HTMLButtonElement>(ctx.el, "#spin");
+
+// 3. Genuinely optional things keep ?. (optional chaining)
+ctx.el.querySelector("#items")?.addEventListener("click", …);
+
+// 4. catch (err) is `unknown` in TypeScript: errorMessage() turns it into text
+} catch (err) { toast(errorMessage(err)); }
+
+// 5. Event targets are generic, so we say what they are
+const button = (e.target as Element).closest<HTMLButtonElement>("[data-remove]");
+```
+
+The `<HTMLInputElement>` part is a **type argument**: it tells TypeScript which kind of
+element to expect, so `.value` and `.disabled` are allowed.
+
+### `src/types.ts`: the shapes of our data
+
+Interfaces describe what TMDB and the database send back, listing only the fields we use:
+
+| Type | What it describes | Used by |
+|---|---|---|
+| `Movie` | A film in search results, trending, filmographies | search, home, person, `posterCard` |
+| `Paged<T>` | One page of TMDB results (`results: T[]`, `total_pages`…) | search, home |
+| `MovieDetails` | `/movie/{id}` with credits + release dates | movie view |
+| `CastMember`, `CrewMember`, `ReleaseDate` | Parts of `MovieDetails` | movie view |
+| `PersonDetails` | `/person/{id}` with filmography | person view |
+| `ListItem`, `List`, `ListMembership` | Rows from our Supabase tables | `db.ts`, lists, list, wheel |
+| `ViewContext` | The `ctx` object every view receives | `app.ts` and all views |
+
+Fields that can really be empty are typed that way, e.g. `poster_path: string | null`.
+The compiler then refuses code that uses a poster path without checking for `null`
+first.
+
+TypeScript **trusts** these shapes. It can't check what TMDB actually sends at runtime.
+If TMDB renamed a field, the compiler wouldn't know; `types.ts` is where you'd update it.
+
+### The import map: Supabase without a bundler
+
+`db.ts` imports Supabase by its package name so TypeScript can find its types:
+
+```ts
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+```
+
+A browser doesn't know what `"@supabase/supabase-js"` means. The **import map** in
+`index.html` tells it:
+
+```html
+<script type="importmap">
+  { "imports": { "@supabase/supabase-js": "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/+esm" } }
+</script>
+```
+
+So the browser still downloads Supabase from the same CDN as before, and the compiler
+checks our code against the same version's types. **Keep the two version numbers equal**
+(here and in `package.json`) when upgrading.
+
+### `.github/workflows/deploy.yml`: build and publish on every push
+
+```
+git push ─► GitHub Actions
+             ├─ build job:  checkout → install Node 24 → npm ci → npm run build
+             │              → copy index.html, styles.css, manifest, icons/, js/ into _site/
+             │              → upload _site/ as the Pages artifact
+             └─ deploy job: publish that artifact to https://carterbris-1.github.io/reel-log/
+```
+
+- **Type errors block the deploy.** `npm run build` fails, so the deploy job never runs
+  and the live site keeps the last good version.
+- **Only site files are published.** `src/`, the docs, `supabase/` and `node_modules/`
+  stay in the repo but aren't served on the website.
+- **`npm ci`** installs exactly what `package-lock.json` says, so GitHub builds with the
+  same versions you have.
+- **`concurrency: pages`** means two quick pushes deploy one after the other rather than
+  colliding.
+- It needs **Settings → Pages → Source: GitHub Actions** (already set for your repo).
+
+### `.gitignore`
+
+| Ignored | Why |
+|---|---|
+| `node_modules/` | Hundreds of downloaded files; `npm install` recreates them |
+| `js/` | Generated output; the deploy workflow rebuilds it from `src/` |
+| `_site/` | Temporary folder the deploy workflow assembles |
+
+Because `js/` isn't in git, a fresh clone has no `js/` folder until you run
+`npm install && npm run build`.
+
+---
+
+## 4. Core code
+
+### `src/app.ts` — the entry point and router
 
 The first script that runs. Four jobs:
 
@@ -319,6 +500,9 @@ const routes = [
 ```
 
 Each entry has three parts: **pattern**, **view function**, and **what config it needs**.
+In TypeScript the table has a type, `[RegExp, View, Needs][]`, where
+`View = (ctx: ViewContext, match: RegExpMatchArray) => Promise<void>` and
+`Needs = "tmdb" | "db"`. A typo like `"tmbd"` is now a compile error.
 
 | URL | `rawPath` (hash minus `#/`) | Matches | View called |
 |---|---|---|---|
@@ -406,7 +590,7 @@ With replaceState:     Home → "the godfather"                                 
 #### Back button for the iPhone Home Screen app
 
 Launched from the Home Screen, iOS shows no browser toolbar and has no swipe-back, so
-without help, every movie page would be a dead end. `app.js` numbers each history entry
+without help, every movie page would be a dead end. `app.ts` numbers each history entry
 in `history.state`:
 
 ```js
@@ -448,11 +632,19 @@ error notice's "Try again" button works without extra wiring.
 
 ---
 
-### `js/tmdb.js` — talking to TMDB
+### `src/tmdb.ts` — talking to TMDB
 
 Small, and only two exports matter.
 
-#### `tmdb(path, params)`
+#### `tmdb<T>(path, params)`
+
+The `<T>` is the response shape the caller expects, from `types.ts`:
+
+```ts
+const data = await tmdb<Paged<Movie>>("/trending/movie/week");
+data.results[0].title;       // ✅ TypeScript knows this is a string
+data.results[0].tittle;      // ❌ compile error: typo caught before it ships
+```
 
 ```js
 const data = await tmdb("/search/movie", { query: "alien", page: 1 });
@@ -467,7 +659,7 @@ const data = await tmdb("/search/movie", { query: "alien", page: 1 });
 | What happened | Message shown |
 |---|---|
 | No internet / DNS failure | "Couldn't reach TMDB. Check your connection and try again." |
-| 401 | "TMDB rejected the API key. Check TMDB_API_KEY in config.js." |
+| 401 | "TMDB rejected the API key. Check TMDB_API_KEY in src/config.ts." |
 | 404 | "TMDB doesn't have that page." |
 | Anything else | "TMDB returned an error (503). Try again." |
 
@@ -489,7 +681,7 @@ poster), `w1280` (backdrop). Smaller sizes load faster on phones.
 
 ---
 
-### `js/db.js` — every database query
+### `src/db.ts` — every database query
 
 Creates the Supabase client and wraps every query the app makes. Views never write
 Supabase queries themselves. They call these functions.
@@ -499,18 +691,28 @@ Supabase queries themselves. They call these functions.
 Supabase doesn't throw errors. It returns `{ data, error }`. `run()` turns that into
 normal JavaScript exceptions so views can use `try/catch`:
 
-```js
-async function run(query) {
-  let result;
+```ts
+async function run<T>(query: PromiseLike<{ data: unknown; error: unknown }>): Promise<T> {
+  let result: { data: unknown; error: unknown };
   try { result = await query; }             // network failure → the promise rejects
   catch { throw new Error(UNAVAILABLE); }
   if (result.error) {                        // Supabase error → logged, then thrown
     console.error(result.error);
     throw new Error(UNAVAILABLE);
   }
-  return result.data;
+  return result.data as T;
 }
 ```
+
+`<T>` makes `run` **generic**: the caller says what shape it expects back, e.g.
+`run<List[]>(…)`. We don't give Supabase a full database schema type, so its results are
+untyped until `run<T>` labels them with the interfaces from `types.ts`. If you change a
+`select(…)`, update the `T` to match.
+
+`supabase` is `SupabaseClient | null` (null while `config.ts` still has placeholders).
+Query functions go through a small `client()` helper that returns the client or throws
+"Lists are temporarily unavailable", so the rest of the code never has to check for
+`null`.
 
 Either way the user sees one friendly message: *"Lists are temporarily unavailable. Try
 again in a moment."* The technical details go to the browser console for debugging.
@@ -581,7 +783,7 @@ PostgREST can't easily order embedded rows. This keeps lists in "order added".
 
 ---
 
-### `js/auth.js` — sign-in and the header avatar
+### `src/auth.ts` — sign-in and the header avatar
 
 #### Exports
 
@@ -642,7 +844,7 @@ becomes "Wrong email or password."
 
 ---
 
-### `js/ui.js` — shared HTML helpers
+### `src/ui.ts` — shared HTML helpers
 
 Small functions used by every view.
 
@@ -656,6 +858,13 @@ Small functions used by every view.
 | `loadingHTML(inline)` | `loadingHTML()` | spinning dotted-brass circle |
 | `noticeHTML(title, body, button)` | `noticeHTML("List not found")` | centred message box |
 | `toast(message)` | `toast("Added to “Date night”")` | pop-up at the bottom for 2.6s |
+| `byId<T>(id)` | `byId<HTMLInputElement>("search-input")` | the element, typed; throws if `index.html` lost it |
+| `find<T>(root, selector)` | `find<HTMLButtonElement>(ctx.el, "#spin")` | same, inside something a view just drew |
+| `errorMessage(err)` | `errorMessage(new Error("Oops"))` | `"Oops"` (and `String(err)` for anything else thrown) |
+
+The last three exist for TypeScript's `strict` mode (see §3b). `document.getElementById`
+might return `null`, so the compiler won't let you use the result directly. `byId` and
+`find` check once and fail with a clear message instead.
 
 #### Why `esc()` matters
 
@@ -694,7 +903,7 @@ midnight. Otherwise it would show as July 15 in American timezones.
 
 ---
 
-### `js/ios.js` — iPhone detection and the Home Screen tip
+### `src/ios.ts` — iPhone detection and the Home Screen tip
 
 | Export | What it is |
 |---|---|
@@ -728,12 +937,12 @@ Every view is an `async function xxxView(ctx, …)` that fetches data and then c
 `ctx.show(html)`. If it throws, the router catches it and shows the error with a
 "Try again" button, so views don't need their own error pages for the main fetch.
 
-### `js/views/home.js` — "Now Showing"
+### `src/views/home.ts` — "Now Showing"
 
 The simplest view. It fetches `/trending/movie/week` (20 films) and renders them as a
 poster wall. It's a good template to copy when adding a new page.
 
-### `js/views/search.js` — search results
+### `src/views/search.ts` — search results
 
 ```
 #/search/alien
@@ -755,7 +964,7 @@ poster wall. It's a good template to copy when adding a new page.
 
 The button disappears once `page === total_pages`.
 
-### `js/views/movie.js` — movie detail + Add to list
+### `src/views/movie.ts` — movie detail + Add to list
 
 The biggest view. It makes **one** TMDB request that gets the movie, cast and release
 dates together:
@@ -841,7 +1050,7 @@ click [＋ ADD TO LIST]
 - **Create** makes the list, adds this film to it, and redraws the panel with the new list
   already ticked.
 
-### `js/views/person.js` — actor / director page
+### `src/views/person.ts` — actor / director page
 
 ```js
 tmdb(`/person/${id}`, { append_to_response: "movie_credits" })
@@ -875,7 +1084,7 @@ Sorted:  [2008 "Gran Torino", 1992 "Unforgiven", "" "Untitled Project"]
 `scrollHeight` with `clientHeight`. The "Read more" button only appears if text is
 actually cut off, so short bios don't get a useless button.
 
-### `js/views/lists.js` — My Lists
+### `src/views/lists.ts` — My Lists
 
 - **Signed out:** a notice with a Sign in button.
 - **Signed in:** a "New list name" form, then a grid of list cards.
@@ -900,9 +1109,9 @@ open the list, so keeping them siblings avoids both problems. One click listener
 grid finds the list by `data-spin` and calls `openWheel(list.list_items)`. `getLists()`
 also fetches `release_date` so the wheel's result card can show the year.
 
-On iPhone Safari, the Home Screen tip from `ios.js` appears at the top of this page.
+On iPhone Safari, the Home Screen tip from `ios.ts` appears at the top of this page.
 
-### `js/views/list.js` — one list
+### `src/views/list.ts` — one list
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -938,7 +1147,7 @@ Security rules make other people's lists invisible, which looks the same as "doe
 
 ---
 
-## 6. The wheel — `js/wheel.js`
+## 6. The wheel — `src/wheel.ts`
 
 The "Randomize" feature, on every list page and every My Lists card. Exports one function: `openWheel(items)`.
 
@@ -1114,7 +1323,7 @@ lists                                   list_items
 
 #### Row-level security (RLS): the part that keeps your data private
 
-Remember, the anon key in `config.js` is public. Anyone could send queries with it. RLS
+Remember, the key in `src/config.ts` is public. Anyone could send queries with it. RLS
 makes Postgres check **every row** against a rule before returning or changing it:
 
 ```sql
@@ -1179,6 +1388,7 @@ day field means "every 3rd day".
 |---|---|---|
 | `README.md` | Step-by-step setup: TMDB key, Supabase project, GitHub Pages, keep-alive secrets, phone tips, running locally | setting up, or setting up again from scratch |
 | `CODE_GUIDE.md` | This file: *what* each file does, *how*, and *why* | you're reading or changing the code |
+| `TYPESCRIPT_MIGRATION.md` | Record of the JavaScript → TypeScript switch: every file changed, why, and how it was tested | you want to know what the TypeScript switch changed, or need to undo it |
 
 ---
 
@@ -1187,11 +1397,11 @@ day field means "every 3rd day".
 ### …you search for a film on your phone
 
 ```
-1. You type "dune"                      app.js: input event → 350ms timer starts
-2. You stop typing                       app.js: runSearch() → location.hash = "#/search/dune"
-3. hashchange fires                      app.js: render() → token #7 → matches search route
+1. You type "dune"                      app.ts: input event → 350ms timer starts
+2. You stop typing                       app.ts: runSearch() → location.hash = "#/search/dune"
+3. hashchange fires                      app.ts: render() → token #7 → matches search route
 4. Loading spinner shows                 ctx.show(loadingHTML())
-5. searchView(ctx, "dune")               search.js → tmdb("/search/movie", {query:"dune"})
+5. searchView(ctx, "dune")               search.ts → tmdb("/search/movie", {query:"dune"})
 6. TMDB responds                         ctx.show(grid) → token still #7 ✅ → posters appear
 7. You tap "Dune: Part Two"              link → "#/movie/693134" → render() → token #8
 ```
@@ -1199,10 +1409,10 @@ day field means "every 3rd day".
 ### …you add a film to a list
 
 ```
-1. Tap [＋ ADD TO LIST]                   movie.js: currentUser()? yes → fill()
-2. Panel loads                            db.js: getListsForMovie(693134)
+1. Tap [＋ ADD TO LIST]                   movie.ts: currentUser()? yes → fill()
+2. Panel loads                            db.ts: getListsForMovie(693134)
                                             → Supabase checks RLS → returns your 3 lists
-3. Tick "Sci-fi"                           db.js: addToList(listId, movie)
+3. Tick "Sci-fi"                           db.ts: addToList(listId, movie)
                                             → upsert into list_items (RLS: parent list is yours ✅)
 4. Toast: Added to "Sci-fi"
 5. Later, on your computer: open My Lists → getLists() → Sci-fi now shows 1 more poster
@@ -1211,8 +1421,8 @@ day field means "every 3rd day".
 ### …you spin the wheel
 
 ```
-1. List page → [🎡 RANDOMIZE]             list.js: openWheel(list.list_items)
-2. Dialog opens, wheel drawn              wheel.js: wheelSVG(films)
+1. List page → [🎡 RANDOMIZE]             list.ts: openWheel(list.list_items)
+2. Dialog opens, wheel drawn              wheel.ts: wheelSVG(films)
 3. [SPIN THE WHEEL]                        winner chosen → rotation computed → CSS animates 5.2s
 4. Wheel stops                             transitionend (or the 5.6s backup) → winner card
 5. [SEE DETAILS]                           dialog closes → "#/movie/<id>"
@@ -1222,36 +1432,43 @@ day field means "every 3rd day".
 
 | Problem | What you see | Where it's handled |
 |---|---|---|
-| Keys not filled in | "Almost there — add a TMDB key" | `app.js` `SETUP` notices |
-| Wrong TMDB key | "TMDB rejected the API key…" + Try again | `tmdb.js` → router catch |
-| Offline | "Couldn't reach TMDB…" + Try again | `tmdb.js` → router catch |
-| Supabase paused/down | "Lists are temporarily unavailable…" | `db.js` `run()` |
-| Saving a tick fails | Tick undone + toast | `movie.js` checkbox handler |
-| Wrong password | "Wrong email or password." | `auth.js` |
-| Deleted/unknown list URL | "List not found" | `list.js` |
+| Keys not filled in | "Almost there — add a TMDB key" | `app.ts` `SETUP` notices |
+| Wrong TMDB key | "TMDB rejected the API key…" + Try again | `tmdb.ts` → router catch |
+| Offline | "Couldn't reach TMDB…" + Try again | `tmdb.ts` → router catch |
+| Supabase paused/down | "Lists are temporarily unavailable…" | `db.ts` `run()` |
+| Saving a tick fails | Tick undone + toast | `movie.ts` checkbox handler |
+| Wrong password | "Wrong email or password." | `auth.ts` |
+| Deleted/unknown list URL | "List not found" | `list.ts` |
 
 ---
 
 ## 10. How to extend it
 
 **Add a new page** (e.g. "Upcoming"):
-1. Create `js/views/upcoming.js` by copying `home.js`, and change the TMDB path to
-   `/movie/upcoming`.
-2. In `app.js`, import it and add `[/^upcoming$/, (ctx) => upcomingView(ctx), "tmdb"]`.
+1. Create `src/views/upcoming.ts` by copying `home.ts`, and change the TMDB path to
+   `/movie/upcoming`. It returns the same `Paged<Movie>` shape, so the types carry over.
+2. In `app.ts`, import it and add `[/^upcoming$/, (ctx) => upcomingView(ctx), "tmdb"]`.
 3. Link to `#/upcoming` from `index.html`'s nav.
+4. With `npm run watch` running, check it at `localhost:8000`, then push.
+
+**TMDB returns a field you want that isn't typed yet:** add it to the matching interface
+in `types.ts` first (e.g. `vote_count: number` on `MovieDetails`). The compiler then
+knows it exists everywhere.
 
 **Show release dates for another country:** change `const COUNTRY = "US"` in
-`movie.js` (e.g. `"GB"`, `"CA"`).
+`movie.ts` (e.g. `"GB"`, `"CA"`).
 
 **Re-theme:** edit the `:root` variables at the top of `styles.css`.
 
 **Add a database column:** add it in `schema.sql` (and run an `alter table` in
-Supabase), then include it in the relevant `select(…)` in `db.js`.
+Supabase), then include it in the relevant `select(…)` in `db.ts`.
 
-**After any change:** bump `?v=1` → `?v=2` on both the CSS and JS links in `index.html`
-so phones fetch the new `styles.css` and `app.js`. The `?v` only affects those two files.
-Modules that `app.js` imports (views, `db.js`, …) can stay cached for up to ~10 minutes
-on GitHub Pages. If a phone still looks stale, wait a few minutes or force-reload.
+**After any change:** edit in `src/`, check locally, then `git push`. GitHub type-checks,
+builds and deploys. To make phones fetch the new version immediately, bump the `?v=`
+number on both the CSS and JS links in `index.html`. That refreshes `styles.css` and
+`js/app.js`. The other compiled modules (views, `db.js`, …) can stay cached for up to
+~10 minutes on GitHub Pages. If a phone still looks stale, wait a few minutes or
+force-reload.
 
 ---
 
@@ -1262,18 +1479,18 @@ computer and your iPhone. Where iOS behaves differently, this is where the code 
 
 | Difference on iPhone | Handled by | What happens |
 |---|---|---|
-| Home Screen app has no Back button | `app.js` history index + `#back-btn` | ‹ Back appears in the header, only in the app |
-| Safari clears storage after ~7 days unvisited, signing you out | `ios.js` tip | Suggests Add to Home Screen, where the data isn't cleared |
+| Home Screen app has no Back button | `app.ts` history index + `#back-btn` | ‹ Back appears in the header, only in the app |
+| Safari clears storage after ~7 days unvisited, signing you out | `ios.ts` tip | Suggests Add to Home Screen, where the data isn't cleared |
 | Home Screen app and Safari keep separate storage | README | Sign in once in each. Expected, not a bug |
 | Hover sticks after a tap | `@media (hover: hover)` wrappers | Hover effects only apply with a mouse |
-| `:active` ignored without a touch listener | `ios.js` `touchstart` listener | Press feedback works |
+| `:active` ignored without a touch listener | `ios.ts` `touchstart` listener | Press feedback works |
 | `background-attachment: fixed` unsupported | `body::before` fixed layer | Lighting looks identical on both |
 | `100vh` includes hidden toolbar area | `100dvh` | Footer sits at the real bottom |
 | Inputs under 16px zoom the page | 16px inputs | No zoom when typing a search |
 | Double-tap zoom delays taps | `touch-action: manipulation` | Instant buttons |
 | Notch / home indicator | `env(safe-area-inset-*)` | Nothing hidden behind them |
 | Page scrolls behind dialogs | `html:has(dialog[open])` | Dialog stays put |
-| Animations pause in background apps | `wheel.js` timer fallback | Wheel result always appears |
+| Animations pause in background apps | `wheel.ts` timer fallback | Wheel result always appears |
 | Keyboard stays open after searching | `searchInput.blur()` on Enter | Keyboard closes |
 | Home Screen icon and name | `apple-touch-icon`, manifest | Film-reel icon labelled "Reel Log" |
 
@@ -1294,12 +1511,12 @@ choosing differently.
 | **No ratings anywhere** | Your choice. Neither your ratings nor TMDB's scores are shown | — |
 | **Supabase** for sign-in + storage | Free Postgres with row-level security; works from a static site | Free projects pause after 7 idle days, hence `keepalive.yml` |
 | **Email + password**, not Google or magic links | GitHub Pages sites live at `/<repo>/`, and Google sign-in / magic links need that exact URL registered as a redirect. A magic link also opens on whatever device got the email | One more password to remember. iCloud Keychain can save it on iPhone and Mac |
-| **Plain JavaScript, no framework, no build step** | GitHub Pages serves the files as-is; nothing to install | Hand-written HTML strings. Past ~15 pages, React + Vite would pay off |
+| **TypeScript compiled by `tsc`, no framework, no bundler** | Type safety with the smallest possible build: one `.ts` → one `.js`. GitHub Actions builds on push | Needs `npm install` and a build step (originally plain JS with none). Hand-written HTML strings. Past ~15 pages, React + Vite would pay off |
 | **Hash routes** (`#/movie/27205`) | GitHub Pages can't route paths, so `/movie/27205` would 404 on refresh | Slightly uglier URLs |
 | **Movie data straight from TMDB**, only a snapshot saved in lists | Always up to date, nothing to sync | A list shows the title/poster from when you added it (see §13) |
 | **Sync on page load**, not live | Simple and reliable | A change on your phone shows on your computer after a reload. Supabase Realtime could push it live later |
 | **Lists ordered by date added** | No reorder UI needed | Manual drag-to-reorder would need a `position` column |
-| **US release dates and age ratings** | Your region | Change `COUNTRY` in `movie.js` |
+| **US release dates and age ratings** | Your region | Change `COUNTRY` in `movie.ts` |
 | **Wheel picks the winner first, then animates** | Guarantees every film has an equal chance, even in 200-film lists | The wheel shows at most 20 slices; bigger lists get a fresh random 20 each spin, always including the winner |
 | **iPhone and computer equally**, no preference | You use both | Every change needs checking on both (§11) |
 
@@ -1325,9 +1542,9 @@ Things that can bite after the code is written, and what to do about them.
 4. **Supabase paused anyway?** The site shows "Lists are temporarily unavailable". Open
    the Supabase dashboard and click **Restore project**.
 5. **TMDB key abused or revoked.** Generate a new key in TMDB settings and replace it in
-   `config.js`. That's a single-line change.
+   `src/config.ts`, then push. That's a single-line change.
 6. **Stale version on your phone.** GitHub Pages caches for ~10 minutes. Bumping `?v=1`
-   in `index.html` refreshes `styles.css` and `app.js` immediately; the other JS files
+   in `index.html` refreshes `styles.css` and `app.ts` immediately; the other JS files
    catch up within minutes.
 7. **List snapshots don't update.** A list keeps the title and poster from when the film
    was added. If TMDB changes a poster later, the list shows the old one, while the movie
@@ -1340,8 +1557,16 @@ Things that can bite after the code is written, and what to do about them.
     so you sign in once in each. That's how iOS works, not a bug.
 11. **Test on a real iPhone.** Desktop Chrome can mimic the screen size but not Safari's
     behaviour. Check changes in both Safari and the Home Screen app.
-12. **Never put the Supabase `service_role` / secret key in `config.js`.** It bypasses
+12. **Never put the Supabase `service_role` / secret key in `src/config.ts`.** It bypasses
     all security, and the file is public.
+13. **Edit `src/`, never `js/`.** `js/` is regenerated on every build, and it isn't in git,
+    so changes there vanish.
+14. **"Build and deploy" failed on GitHub?** Open **Actions**, click the red run, and read
+    the `Build` step. It lists the type errors with file and line. Fix locally with
+    `npm run typecheck`, then push again. The live site stays on the previous version
+    until then.
+15. **Upgrading Supabase:** change the version in *both* `package.json` and the import map
+    in `index.html`, then `npm install`.
 
 ---
 
@@ -1352,18 +1577,18 @@ anything, on both computer and iPhone.
 
 | Feature | Where |
 |---|---|
-| Search by title, results as a poster wall, "Load more" | `search.js`, header search in `app.js` |
-| Home page shows this week's trending films | `home.js` |
-| Movie page: backdrop, poster, director, age rating, runtime, genres, tagline, overview | `movie.js` |
-| US release dates by type (premiere, theatrical, digital…), with fallback | `movie.js` `releaseRows()` |
-| Top 20 cast with photos → actor pages with bio and filmography | `movie.js`, `person.js` |
-| Add/remove a film from any list with checkboxes; create a list inline | `movie.js` `setupListPanel()` |
-| Create, rename, delete lists; remove films | `lists.js`, `list.js` |
-| 🎡 Randomize wheel on each list page **and** each My Lists card | `wheel.js`, `list.js`, `lists.js` |
-| Sign in with email + password; same lists on phone and computer | `auth.js`, `db.js` |
+| Search by title, results as a poster wall, "Load more" | `search.ts`, header search in `app.ts` |
+| Home page shows this week's trending films | `home.ts` |
+| Movie page: backdrop, poster, director, age rating, runtime, genres, tagline, overview | `movie.ts` |
+| US release dates by type (premiere, theatrical, digital…), with fallback | `movie.ts` `releaseRows()` |
+| Top 20 cast with photos → actor pages with bio and filmography | `movie.ts`, `person.ts` |
+| Add/remove a film from any list with checkboxes; create a list inline | `movie.ts` `setupListPanel()` |
+| Create, rename, delete lists; remove films | `lists.ts`, `list.ts` |
+| 🎡 Randomize wheel on each list page **and** each My Lists card | `wheel.ts`, `list.ts`, `lists.ts` |
+| Sign in with email + password; same lists on phone and computer | `auth.ts`, `db.ts` |
 | Only you can see or change your lists | `schema.sql` row-level security |
 | Movie-theater poster-wall theme | `styles.css` |
-| iPhone: Home Screen icon, Back button in the app, sign-in-loss tip, touch feedback | `ios.js`, `app.js`, `index.html`, `manifest.webmanifest`, `icons/` |
-| Friendly messages for missing keys, errors, offline | `app.js`, `tmdb.js`, `db.js` |
+| iPhone: Home Screen icon, Back button in the app, sign-in-loss tip, touch feedback | `ios.ts`, `app.ts`, `index.html`, `manifest.webmanifest`, `icons/` |
+| Friendly messages for missing keys, errors, offline | `app.ts`, `tmdb.ts`, `db.ts` |
 | Supabase kept awake | `.github/workflows/keepalive.yml` |
 | TMDB attribution | footer in `index.html` |

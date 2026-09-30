@@ -1,0 +1,57 @@
+# Builds the TypeScript and publishes the site to GitHub Pages on every push to main.
+# Only the files the site needs are published — not src/, docs, or node_modules.
+# Requires: repo Settings → Pages → Build and deployment → Source: "GitHub Actions".
+name: Build and deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never cancel a deploy halfway; queue the next one instead.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # Type-checks and compiles src/*.ts → js/*.js. Any type error fails the build,
+      # so a broken change never reaches the live site.
+      - name: Build
+        run: npm run build
+
+      - name: Collect site files
+        run: |
+          mkdir _site
+          cp -R index.html styles.css manifest.webmanifest icons js _site/
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

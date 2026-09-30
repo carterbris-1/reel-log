@@ -1,11 +1,12 @@
 import { getLists, createList } from "../db.js";
 import { currentUser, openSignIn } from "../auth.js";
-import { esc, noticeHTML, toast } from "../ui.js";
+import { errorMessage, esc, find, noticeHTML, toast } from "../ui.js";
 import { img } from "../tmdb.js";
 import { homeScreenTipHTML, bindHomeScreenTip } from "../ios.js";
 import { openWheel } from "../wheel.js";
+import type { List, ViewContext } from "../types.js";
 
-function listCard(list) {
+function listCard(list: List): string {
   const items = list.list_items;
   const stack = items
     .slice(0, 4)
@@ -28,7 +29,7 @@ function listCard(list) {
     </div>`;
 }
 
-export async function listsView(ctx) {
+export async function listsView(ctx: ViewContext): Promise<void> {
   if (!currentUser()) {
     ctx.show(noticeHTML(
       "Sign in to see your lists",
@@ -56,25 +57,26 @@ export async function listsView(ctx) {
   bindHomeScreenTip(ctx.el);
 
   ctx.el.querySelector(".list-grid")?.addEventListener("click", (e) => {
-    const button = e.target.closest("[data-spin]");
+    const button = (e.target as Element).closest<HTMLElement>("[data-spin]");
     if (!button) return;
     const list = lists.find((l) => l.id === button.dataset.spin);
     if (list) openWheel(list.list_items);
   });
 
-  ctx.el.querySelector("#new-list-form").addEventListener("submit", async (e) => {
+  find<HTMLFormElement>(ctx.el, "#new-list-form").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const form = e.currentTarget;
-    const name = form.querySelector("input").value.trim();
+    const form = e.currentTarget as HTMLFormElement;
+    const createBtn = find<HTMLButtonElement>(form, "button");
+    const name = find<HTMLInputElement>(form, "input").value.trim();
     if (!name) return;
-    form.querySelector("button").disabled = true;
+    createBtn.disabled = true;
     try {
       await createList(name);
       toast(`Created “${name}”`);
       ctx.rerender();
     } catch (err) {
-      toast(err.message);
-      form.querySelector("button").disabled = false;
+      toast(errorMessage(err));
+      createBtn.disabled = false;
     }
   });
 }

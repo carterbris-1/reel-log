@@ -1,10 +1,11 @@
 import { tmdb, img } from "../tmdb.js";
 import { getListsForMovie, createList, addToList, removeFromList } from "../db.js";
 import { currentUser, openSignIn } from "../auth.js";
-import { esc, year, formatDate, posterImg, loadingHTML, toast } from "../ui.js";
+import { errorMessage, esc, find, year, formatDate, posterImg, loadingHTML, toast } from "../ui.js";
+import type { CastMember, CrewMember, ListMembership, MovieDetails, ViewContext } from "../types.js";
 
 // TMDB release types: https://developer.themoviedb.org/reference/movie-release-dates
-const RELEASE_TYPES = {
+const RELEASE_TYPES: Record<number, string> = {
   1: "Premiere",
   2: "Theatrical (limited)",
   3: "Theatrical",
@@ -14,12 +15,13 @@ const RELEASE_TYPES = {
 };
 const COUNTRY = "US";
 
-function releaseRows(movie) {
+/** [type label, formatted date HTML] rows for the release-dates table. */
+function releaseRows(movie: MovieDetails): [string, string][] {
   const local = movie.release_dates?.results?.find((r) => r.iso_3166_1 === COUNTRY);
   const rows = (local?.release_dates ?? [])
     .slice()
     .sort((a, b) => a.release_date.localeCompare(b.release_date))
-    .map((r) => [
+    .map((r): [string, string] => [
       RELEASE_TYPES[r.type] ?? "Release",
       `${formatDate(r.release_date)}${r.note ? ` <span class="muted">· ${esc(r.note)}</span>` : ""}`,
     ]);
@@ -28,21 +30,21 @@ function releaseRows(movie) {
   return rows;
 }
 
-function certification(movie) {
+function certification(movie: MovieDetails): string {
   const local = movie.release_dates?.results?.find((r) => r.iso_3166_1 === COUNTRY);
   return local?.release_dates?.find((r) => r.certification)?.certification ?? "";
 }
 
-function runtime(minutes) {
+function runtime(minutes: number | null): string {
   if (!minutes) return "";
   const h = Math.floor(minutes / 60);
   return h ? `${h}h ${minutes % 60}m` : `${minutes}m`;
 }
 
-const personLinks = (people) =>
+const personLinks = (people: CrewMember[]) =>
   people.map((p) => `<a href="#/person/${p.id}">${esc(p.name)}</a>`).join(", ");
 
-function castCard(c) {
+function castCard(c: CastMember): string {
   const src = img(c.profile_path, "w185");
   return `
     <a class="cast" href="#/person/${c.id}">
@@ -52,8 +54,8 @@ function castCard(c) {
     </a>`;
 }
 
-export async function movieView(ctx, id) {
-  const m = await tmdb(`/movie/${id}`, { append_to_response: "credits,release_dates" });
+export async function movieView(ctx: ViewContext, id: number): Promise<void> {
+  const m = await tmdb<MovieDetails>(`/movie/${id}`, { append_to_response: "credits,release_dates" });
 
   const directors = m.credits.crew.filter((c) => c.job === "Director");
   const cast = m.credits.cast.slice(0, 20);
@@ -99,9 +101,9 @@ export async function movieView(ctx, id) {
   if (shown) setupListPanel(ctx, m);
 }
 
-function setupListPanel(ctx, movie) {
-  const button = ctx.el.querySelector("#add-btn");
-  const panel = ctx.el.querySelector("#list-panel");
+function setupListPanel(ctx: ViewContext, movie: MovieDetails): void {
+  const button = find(ctx.el, "#add-btn");
+  const panel = find(ctx.el, "#list-panel");
 
   button.addEventListener("click", () => {
     if (!currentUser()) return openSignIn();
@@ -109,13 +111,13 @@ function setupListPanel(ctx, movie) {
     if (!panel.hidden) fill();
   });
 
-  async function fill() {
+  async function fill(): Promise<void> {
     panel.innerHTML = loadingHTML(true);
-    let lists;
+    let lists: ListMembership[];
     try {
       lists = await getListsForMovie(movie.id);
     } catch (err) {
-      panel.innerHTML = `<p class="error small">${esc(err.message)}</p>`;
+      panel.innerHTML = `<p class="error small">${esc(errorMessage(err))}</p>`;
       return;
     }
     if (!ctx.current()) return;
@@ -133,40 +135,42 @@ function setupListPanel(ctx, movie) {
         <button class="btn btn-accent btn-sm">Create</button>
       </form>`;
 
-    panel.querySelectorAll("input[type=checkbox]").forEach((box) => {
+    panel.querySelectorAll<HTMLInputElement>("input[type=checkbox]").forEach((box) => {
       box.addEventListener("change", async () => {
-        const name = box.nextElementSibling.textContent;
+        const listId = box.dataset.list ?? "";
+        const name = box.nextElementSibling?.textContent ?? "";
         box.disabled = true;
         try {
           if (box.checked) {
-            await addToList(box.dataset.list, movie);
+            await addToList(listId, movie);
             toast(`Added to “${name}”`);
           } else {
-            await removeFromList(box.dataset.list, movie.id);
+            await removeFromList(listId, movie.id);
             toast(`Removed from “${name}”`);
           }
         } catch (err) {
           box.checked = !box.checked;
-          toast(err.message);
+          toast(errorMessage(err));
         }
         box.disabled = false;
       });
     });
 
-    panel.querySelector("#new-list-form").addEventListener("submit", async (e) => {
+    find<HTMLFormElement>(panel, "#new-list-form").addEventListener("submit", async (e) => {
       e.preventDefault();
-      const form = e.currentTarget;
-      const name = form.querySelector("input").value.trim();
+      const form = e.currentTarget as HTMLFormElement;
+      const createBtn = find<HTMLButtonElement>(form, "button");
+      const name = find<HTMLInputElement>(form, "input").value.trim();
       if (!name) return;
-      form.querySelector("button").disabled = true;
+      createBtn.disabled = true;
       try {
         const list = await createList(name);
         await addToList(list.id, movie);
         toast(`Added to “${name}”`);
         if (ctx.current()) fill();
       } catch (err) {
-        toast(err.message);
-        form.querySelector("button").disabled = false;
+        toast(errorMessage(err));
+        createBtn.disabled = false;
       }
     });
   }

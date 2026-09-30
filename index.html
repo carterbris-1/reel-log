@@ -17,7 +17,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Limelight&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=1">
+  <link rel="stylesheet" href="styles.css?v=2">
 </head>
 <body>
   <header class="topbar">
@@ -55,6 +55,13 @@
     <p id="auth-error" class="error small" hidden></p>
   </dialog>
 
-  <script type="module" src="js/app.js?v=1"></script>
+  <!-- The compiled code imports "@supabase/supabase-js" by name (so TypeScript can type it);
+       this import map tells the browser to load that name from the CDN, as before.
+       Keep the version in step with package.json. -->
+  <script type="importmap">
+    { "imports": { "@supabase/supabase-js": "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/+esm" } }
+  </script>
+  <!-- js/ is compiled from src/*.ts by `npm run build` (and by GitHub Actions on deploy). -->
+  <script type="module" src="js/app.js?v=2"></script>
 </body>
 </html>

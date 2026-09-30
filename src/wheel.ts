@@ -1,7 +1,10 @@
-import { esc, year, posterImg } from "./ui.js";
+import { esc, find, year, posterImg } from "./ui.js";
+import type { ListItem } from "./types.js";
+
+type Colors = readonly [fill: string, ink: string];
 
 // Wheel segments cycle through the theater palette: velvet red, brass, plum, cream.
-const COLORS = [
+const COLORS: readonly Colors[] = [
   ["#b3202e", "#f6d27a"],
   ["#e2b04a", "#3a0a0f"],
   ["#4a1f33", "#f3e9dc"],
@@ -10,16 +13,17 @@ const COLORS = [
 const MAX_SEGMENTS = 20; // beyond this the labels become unreadable
 const R = 100;
 
-const xy = (deg, r = R) => {
+const xy = (deg: number, r = R): [string, string] => {
   const rad = (deg * Math.PI) / 180;
   return [(r * Math.sin(rad)).toFixed(2), (-r * Math.cos(rad)).toFixed(2)];
 };
-const point = (deg, r) => xy(deg, r).join(" ");
+const point = (deg: number, r?: number) => xy(deg, r).join(" ");
 
 // The last segment touches the first, so don't let them share a colour.
-const colorFor = (i, n) => (i === n - 1 && i % COLORS.length === 0 ? COLORS[1] : COLORS[i % COLORS.length]);
+const colorFor = (i: number, n: number): Colors =>
+  i === n - 1 && i % COLORS.length === 0 ? COLORS[1] : COLORS[i % COLORS.length];
 
-const shuffle = (arr) => {
+const shuffle = <T>(arr: readonly T[]): T[] => {
   const a = arr.slice();
   for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -32,7 +36,7 @@ const shuffle = (arr) => {
  * Angles are measured clockwise from 12 o'clock, where the pointer sits.
  * Segment i covers [i·step, (i+1)·step).
  */
-function wheelSVG(films) {
+function wheelSVG(films: readonly ListItem[]): string {
   const n = films.length;
   const step = 360 / n;
   const fontSize = n <= 6 ? 7.5 : n <= 12 ? 6.2 : 5;
@@ -65,7 +69,9 @@ function wheelSVG(films) {
 }
 
 /** Opens the "Tonight's Feature" wheel for the given list items. */
-export function openWheel(items) {
+export function openWheel(items: readonly ListItem[]): void {
+  if (items.length === 0) return;
+
   const dialog = document.createElement("dialog");
   dialog.className = "wheel-dialog";
   dialog.innerHTML = `
@@ -79,9 +85,9 @@ export function openWheel(items) {
     <div id="wheel-result" aria-live="polite"></div>`;
   document.body.append(dialog);
 
-  const rotor = dialog.querySelector(".wheel-rotor");
-  const spinBtn = dialog.querySelector("#spin");
-  const result = dialog.querySelector("#wheel-result");
+  const rotor = find(dialog, ".wheel-rotor");
+  const spinBtn = find<HTMLButtonElement>(dialog, "#spin");
+  const result = find(dialog, "#wheel-result");
   let rotation = 0;
   let films = items.length > MAX_SEGMENTS ? shuffle(items).slice(0, MAX_SEGMENTS) : items;
   rotor.innerHTML = wheelSVG(films);
@@ -111,7 +117,7 @@ export function openWheel(items) {
     const fallback = setTimeout(done, 5600);
     rotor.addEventListener("transitionend", done, { once: true });
 
-    function done() {
+    function done(): void {
       if (finished) return;
       finished = true;
       clearTimeout(fallback);
@@ -130,7 +136,7 @@ export function openWheel(items) {
   });
 
   result.addEventListener("click", (e) => {
-    if (e.target.closest("a")) dialog.close();
+    if ((e.target as Element).closest("a")) dialog.close();
   });
   dialog.addEventListener("close", () => dialog.remove());
   dialog.showModal();

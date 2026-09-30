@@ -1,11 +1,12 @@
 import { getList, renameList, deleteList, removeFromList } from "../db.js";
 import { currentUser, openSignIn } from "../auth.js";
-import { esc, noticeHTML, posterCard, toast } from "../ui.js";
+import { errorMessage, esc, find, noticeHTML, posterCard, toast } from "../ui.js";
 import { openWheel } from "../wheel.js";
+import type { ViewContext } from "../types.js";
 
-const countText = (n) => `${n} film${n === 1 ? "" : "s"}`;
+const countText = (n: number) => `${n} film${n === 1 ? "" : "s"}`;
 
-export async function listView(ctx, id) {
+export async function listView(ctx: ViewContext, id: string): Promise<void> {
   if (!currentUser()) {
     ctx.show(noticeHTML(
       "Sign in to see this list",
@@ -40,12 +41,13 @@ export async function listView(ctx, id) {
       ? `<div class="grid" id="items">${list.list_items.map((i) => posterCard(i, { removable: true })).join("")}</div>`
       : `<p class="muted">This list is empty. Search for a film and use “Add to list”.</p>`}`)) return;
 
-  const nameEl = ctx.el.querySelector("#list-name");
-  const spinBtn = ctx.el.querySelector("#spin");
+  const nameEl = find(ctx.el, "#list-name");
+  const countEl = find(ctx.el, "#list-count");
+  const spinBtn = find<HTMLButtonElement>(ctx.el, "#spin");
 
   spinBtn.addEventListener("click", () => openWheel(list.list_items));
 
-  ctx.el.querySelector("#rename").addEventListener("click", async () => {
+  find(ctx.el, "#rename").addEventListener("click", async () => {
     const name = prompt("Rename list", list.name)?.trim();
     if (!name || name === list.name) return;
     try {
@@ -54,39 +56,40 @@ export async function listView(ctx, id) {
       nameEl.textContent = list.name;
       toast("Renamed");
     } catch (err) {
-      toast(err.message);
+      toast(errorMessage(err));
     }
   });
 
-  ctx.el.querySelector("#delete").addEventListener("click", async () => {
+  find(ctx.el, "#delete").addEventListener("click", async () => {
     if (!confirm(`Delete “${list.name}”? This can't be undone.`)) return;
     try {
       await deleteList(id);
       toast(`Deleted “${list.name}”`);
       location.hash = "#/lists";
     } catch (err) {
-      toast(err.message);
+      toast(errorMessage(err));
     }
   });
 
   ctx.el.querySelector("#items")?.addEventListener("click", async (e) => {
-    const button = e.target.closest("[data-remove]");
+    const button = (e.target as Element).closest<HTMLButtonElement>("[data-remove]");
     if (!button) return;
     e.preventDefault(); // the button sits inside the card's link
+    const tmdbId = Number(button.dataset.remove);
     const card = button.closest(".card");
-    const title = card.querySelector(".card-title").textContent;
+    const title = card?.querySelector(".card-title")?.textContent ?? "film";
     button.disabled = true;
     try {
-      await removeFromList(id, Number(button.dataset.remove));
-      card.remove();
-      list.list_items = list.list_items.filter((i) => i.tmdb_id !== Number(button.dataset.remove));
+      await removeFromList(id, tmdbId);
+      card?.remove();
+      list.list_items = list.list_items.filter((i) => i.tmdb_id !== tmdbId);
       count -= 1;
       spinBtn.disabled = count < 2;
-      ctx.el.querySelector("#list-count").textContent = countText(count);
+      countEl.textContent = countText(count);
       toast(`Removed “${title}”`);
     } catch (err) {
       button.disabled = false;
-      toast(err.message);
+      toast(errorMessage(err));
     }
   });
 }
