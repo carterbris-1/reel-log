@@ -42,7 +42,7 @@ jobs:
           mkdir _site
           cp -R index.html styles.css manifest.webmanifest icons js _site/
 
-      # For You recommender data: the files the browser loads, from the newest data-YYYY-MM
+      # For You recommender data: the files the browser loads, from the newest data-*
       # release (built by recommender/prep.py). Kept out of git, so they're added here.
       # No release yet → skipped, and For You shows its "data unavailable" notice.
       # The manifest decides what's served: only the files it lists are copied, and the
@@ -53,8 +53,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          tag=$(gh release list --limit 100 --json tagName,createdAt \
-            --jq '[.[] | select(.tagName | startswith("data-"))] | sort_by(.createdAt) | last | .tagName // empty')
+          tag=$(gh release list --limit 100 --exclude-drafts --exclude-pre-releases --json tagName,publishedAt \
+            --jq '[.[] | select(.tagName | startswith("data-"))] | sort_by(.publishedAt) | last | .tagName // empty')
           if [ -z "$tag" ]; then
             echo "No data-* release yet; For You will show its notice."
             exit 0
@@ -62,7 +62,11 @@ jobs:
           mkdir -p _site/data
           gh release download "$tag" --dir _site/data --pattern manifest.json \
             || { echo "::error::$tag has no manifest.json"; exit 1; }
-          for f in $(jq -r '.files[]' _site/data/manifest.json); do
+          # Read the list into a variable first: bash -e ignores a failing jq inside a
+          # for-loop's word list, which would deploy a broken manifest with no data files.
+          files=$(jq -er '.files | if type == "object" and length > 0 then .[] else error("no files") end' \
+            _site/data/manifest.json) || { echo "::error::$tag has an invalid manifest.json"; exit 1; }
+          for f in $files; do
             gh release download "$tag" --dir _site/data --pattern "$f" \
               || { echo "::error::$tag is missing $f, which its manifest lists"; exit 1; }
           done

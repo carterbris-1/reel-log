@@ -227,8 +227,9 @@ on cards, and syncing cooldown through Supabase.
 9. **Explore slot and pool fallbacks.** Depends on 8. *Done when:* after 20 votes on action
    films only, the explore card is never an action film, and a forced-empty artsy pool
    still fills the slot.
-10. **Rewatch** (R12). Depends on 8. *Done when:* with vote dates faked to 90 days old,
-    about 20% of refreshes show a badged 👍 movie, and 👎 on it moves it to Disliked.
+10. **Rewatch** (R12). Depends on 8. *Done when:* with the worker's clock moved 90 days
+    ahead (not by editing `voted_at`: the `stamp_vote` trigger re-stamps any edit), about
+    20% of refreshes show a badged 👍 movie, and 👎 on it moves it to Disliked.
 11. **Onboarding** (R8). Depends on 6, 7. *Done when:* a fresh account sees the 15 cards,
     quitting at card 8 resumes at card 9, and after 15 it never sees onboarding again.
 

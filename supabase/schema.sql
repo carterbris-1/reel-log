@@ -49,7 +49,7 @@ create table if not exists public.votes (
   user_id   uuid not null default auth.uid() references auth.users on delete cascade,
   tmdb_id   int  not null,
   thumb     smallint not null check (thumb in (1, -1)),
-  voted_at  timestamptz not null default now(),
+  voted_at  timestamptz not null default now(),  -- the stamp_vote trigger below is what sets it
   primary key (user_id, tmdb_id)
 );
 

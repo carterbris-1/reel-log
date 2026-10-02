@@ -412,8 +412,8 @@ Verified: `npm run typecheck` and `npm run build` both pass.
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          tag=$(gh release list --limit 100 --json tagName,createdAt \
-            --jq '[.[] | select(.tagName | startswith("data-"))] | sort_by(.createdAt) | last | .tagName // empty')
+          tag=$(gh release list --limit 100 --json tagName,publishedAt \
+            --jq '[.[] | select(.tagName | startswith("data-"))] | sort_by(.publishedAt) | last | .tagName // empty')
           if [ -z "$tag" ]; then
             echo "No data-* release yet; For You will show its notice."
             exit 0
@@ -484,11 +484,11 @@ the licence risk for personal use (spec risk 2).
 - **Copy files by name instead of `--pattern '*.json'`.** A pattern would also have
   published `embed_format.json`, and `gh release download` errors when a pattern matches
   nothing, which would break the deploy until `onboarding.json` exists.
-- **"Newest" means newest by `createdAt`**, not tag-name order. Both work for
-  `data-YYYY-MM`, but a hand-made re-release (e.g. `data-2026-10b`) would still win.
+- **"Newest" means newest by `publishedAt`**, not tag name. (This first used `createdAt`,
+  which turned out to be wrong; see "Review fixes → Fix 7".)
 - **`GH_REPO` is set explicitly**, so `gh` doesn't depend on the checkout's git remote.
-- **`setVote` sets `voted_at` explicitly.** An upsert that updates an existing row
-  wouldn't re-apply the `now()` default, and Rewatch (R12) needs a re-stamp.
+- ~~**`setVote` sets `voted_at` explicitly.**~~ Replaced by the server trigger in "Review
+  fixes → Fix 5": `setVote` no longer sends a time.
 - **Commits.** You approved two commits plus the release command. I ran the commits; the
   release was blocked and run by you. The push is pending its review (CLAUDE.md).
 
@@ -643,3 +643,96 @@ uses `data-<version>` instead of `data-YYYY-MM`. CODE_GUIDE describes the paged
    so the deploy picks it.
 2. Optionally delete the old `data-2026-10` release and tag. It's harmless once it isn't
    the newest, but it can never deploy again.
+
+### Fix 7: release ordering (found while testing the new release)
+
+After you published `data-2026-10-ac759f25`, the deploy step still picked the **old**
+`data-2026-10`. Actual output:
+```text
+no assets match the file pattern
+::error::data-2026-10 is missing onboarding.json, which its manifest lists
+exit=1
+```
+*Cause:* for a release, GitHub's `createdAt` is the date of the commit the tag points
+at, not when the release was made. Both releases tag the same commit, so they tied:
+```text
+{"createdAt":"2026-09-30T16:04:25Z","publishedAt":"2026-10-02T15:48:32Z","tagName":"data-2026-10-ac759f25"}
+{"createdAt":"2026-09-30T16:04:25Z","publishedAt":"2026-10-02T15:18:53Z","tagName":"data-2026-10"}
+```
+and the tie went to the old one. *Fix* (`deploy.yml:56-57`): select and sort by
+`publishedAt`. Retest (actual output):
+```text
+Added data-2026-10-ac759f25 (version 2026-10-ac759f25):
+-rw-r--r--@ 1 kujo  wheel  1345390 Oct  2 08:49 catalogue.json
+-rw-r--r--@ 1 kujo  wheel      557 Oct  2 08:49 manifest.json
+-rw-r--r--@ 1 kujo  wheel  3325184 Oct  2 08:49 vectors.i8
+exit=0
+manifest.json identical / vectors.i8 identical / catalogue.json identical
+```
+
+### Second review round (on all three commits)
+
+The `code-reviewer` agent re-reviewed `origin/main..be32e98` and found no critical issues.
+
+| Found | Fix | File |
+|---|---|---|
+| A malformed manifest (no `files`, empty `files`, invalid JSON) still deployed "successfully", because `bash -e` ignores a failing `jq` inside a `for` word list | Read the list into `files=$(jq -er …) \|\| exit 1` first, requiring a non-empty object | `deploy.yml` |
+| The trigger re-stamps any edited `voted_at`, so task 10's "fake vote dates to 90 days old" can't work | Task 10 now says to move the worker's clock instead | `recommender-spec.md` |
+| Offset paging could return a vote twice if another device writes between pages | De-duplicate by `tmdb_id` after paging | `src/db.ts` |
+| Stale notes: the deploy comment said `data-YYYY-MM`, the model doc's release command left out `embed_format.json`, and a SCRATCH bullet still said `setVote` sends `voted_at` | Corrected | `deploy.yml`, `recommender-model.md`, this file |
+
+```bash
+# deploy.yml, the new guard before the download loop
+files=$(jq -er '.files | if type == "object" and length > 0 then .[] else error("no files") end' \
+  _site/data/manifest.json) || { echo "::error::$tag has an invalid manifest.json"; exit 1; }
+for f in $files; do
+```
+
+```ts
+// src/db.ts, the end of getVotes()
+  // A vote from another device between two pages shifts rows, so one could appear twice.
+  const seen = new Set<number>();
+  return votes.filter((v) => !seen.has(v.tmdb_id) && seen.add(v.tmdb_id));
+```
+
+**Tests** (actual output): the full step against the real release, plus the guard alone
+against bad manifests:
+```text
+== real release
+exit=0 files: catalogue.json manifest.json vectors.i8
+== bad manifests (jq part only)
+  {"version":"x"} -> rejected
+  {"files":{}} -> rejected
+  not json -> rejected
+  {"files":{"vectors":"vectors.i8"}} -> accepted: vectors.i8
+```
+
+### Third round (`/code-review` on all three commits)
+
+`/code-review high` (separate session) found ten items. One was the `jq` gap above, found
+by both reviewers. The others:
+
+| Found | Decision |
+|---|---|
+| `getVotes` stopped when a page held < 1,000 rows, so it would drop votes if Supabase's Max Rows is set lower | **Fixed:** stop only on an empty page (one extra request) |
+| Offset paging can skip or repeat a row when a vote lands mid-load | **Partly:** repeats are removed by the de-dup. A skip needs >1,000 votes *and* a vote during loading; left as a known limit |
+| The join tiebreak preferred more votes over an exact `tmdbId` match (flagged by both reviewers across rounds) | **Fixed:** exact match first, then votes. Measured on the current data: **0** genome assignments change (the only shared movieId is *King Kong vs. Godzilla*, where both rules agree), so `join` wasn't rerun |
+| Draft or pre-release `data-*` releases could be picked | **Fixed:** `--exclude-drafts --exclude-pre-releases` |
+| Publishing a release doesn't redeploy | **Documented** in CODE_GUIDE (run `gh workflow run deploy.yml`). A `release: published` trigger was rejected: it builds the tag's commit, and both data tags point at the old `3dc6800`, so it would roll back the site's code |
+| A null plot text would crash `embed` | **Fixed:** `fill_null("")` (none in the current data) |
+| A missing check film crashed `vectors` after the files were written | **Fixed:** log and skip |
+| `voted_at default now()` is redundant with the trigger | **Kept** as a fallback, with a comment saying the trigger sets it |
+| Repeated full argsorts in the checks | **Kept:** speed only, ~1 s today |
+
+```python
+# recommender/prep.py, join tiebreak
+    taken = pl.col("movieId").is_not_null() & pl.col("movieId").is_duplicated()
+    score = pl.col("by_tmdb").cast(pl.Float64) * 1e12 + pl.col("vote_count")
+    first = score.rank("ordinal", descending=True).over("movieId") == 1
+```
+
+**Checks** (actual output): the new tiebreak on the real joined data gives
+`rows whose genome would change: 0`. `--stage vectors` reran:
+`data version 2026-10-ac759f25 → publish as release data-2026-10-ac759f25`, which is
+unchanged, so the published release stays valid. The deploy step against the live releases
+prints `Added data-2026-10-ac759f25 (version 2026-10-ac759f25):`. `npm run typecheck` passes.

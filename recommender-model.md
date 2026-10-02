@@ -218,7 +218,7 @@ sees the change. The main thread sends `vote` only after Supabase confirms the w
    (~5k calls at ≤ 40 req/s ≈ 2–3 min).
 5. Drop movies that are 12+ months old with `votes < 200` (spec §5.5). Rows shift, which
    is fine: votes are keyed by `tmdb_id` and the worker rebuilds columns per version.
-6. Write the files, `gh release create data-<version> out/* recommender/work/*.npz`, then
+6. Write the files, `gh release create data-<version> out/* work/*.npz work/embed_format.json`, then
    `gh workflow run deploy.yml`. A release made with `GITHUB_TOKEN` does **not** trigger
    other workflows on its own, so the explicit dispatch is required.
 

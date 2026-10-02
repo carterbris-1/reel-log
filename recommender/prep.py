@@ -173,19 +173,25 @@ def stage_join() -> None:
         )
         .join(by_tmdb, on="id", how="left")
         .join(by_imdb, on="imdb_num", how="left")
-        .with_columns(pl.coalesce("ml_tmdb", "ml_imdb").alias("movieId"))
+        .with_columns(
+            pl.coalesce("ml_tmdb", "ml_imdb").alias("movieId"),
+            pl.col("ml_tmdb").is_not_null().alias("by_tmdb"),
+        )
         .drop("ml_tmdb", "ml_imdb", "imdb_num")
     )
 
     log("pivoting genome scores (15.6M rows)")
     genome = genome_matrix(ml)
     movies = movies.join(genome, on="movieId", how="left")
-    # Two TMDB ids can map to one MovieLens movie; only the more-voted one keeps the genome.
+    # Two TMDB ids can map to one MovieLens movie; one keeps the genome. An exact tmdbId
+    # match beats an imdbId fallback, then more votes wins. (2026-10: one such pair,
+    # King Kong vs. Godzilla, where both rules agree.) Ranking keeps the row order.
     taken = pl.col("movieId").is_not_null() & pl.col("movieId").is_duplicated()
-    first = pl.col("vote_count").rank("ordinal", descending=True).over("movieId") == 1
+    score = pl.col("by_tmdb").cast(pl.Float64) * 1e12 + pl.col("vote_count")
+    first = score.rank("ordinal", descending=True).over("movieId") == 1
     movies = movies.with_columns(
         pl.when(taken & ~first).then(None).otherwise(pl.col("genome")).alias("genome")
-    )
+    ).drop("by_tmdb")
 
     out = WORK / "joined.parquet"
     movies.write_parquet(out)
@@ -222,7 +228,7 @@ def stage_embed() -> None:
     group exactly (cosine 1.000) and puts everyone in the same space.
     """
     movies = pl.read_parquet(WORK / "joined.parquet")
-    texts = movies["title_tagline_overview"].to_list()
+    texts = movies["title_tagline_overview"].fill_null("").to_list()  # None would crash encode
     model = embedder()
     log(f"embedding {len(texts):,} texts with {EMBED_MODEL} on {model.device} (~50/s)")
     t = time.time()
@@ -408,6 +414,9 @@ def stage_vectors() -> None:
     q_file = np.frombuffer((OUT / "vectors.i8").read_bytes(), dtype=np.int8).reshape(n, DIMS)
     titles = catalogue["title"]
     for tmdb_id in CHECK_FILMS:
+        if tmdb_id not in catalogue["tmdb"]:
+            log(f"check film {tmdb_id} isn't in this catalogue; skipped")
+            continue
         row = catalogue["tmdb"].index(tmdb_id)
         log(f"nearest to {titles[row]}: " + "; ".join(neighbours(q_file, inv, titles, row)))
 

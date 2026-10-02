@@ -110,7 +110,8 @@ export function removeFromList(listId: string, tmdbId: number): Promise<void> {
 
 // ── For You votes ─────────────────────────────────────────────────────────────
 
-/** Supabase returns at most 1,000 rows per request, so votes are fetched in pages. */
+/** Supabase returns at most 1,000 rows per request (less if Max Rows is set lower), so
+ *  votes are fetched in pages until one comes back empty. */
 const VOTE_PAGE = 1000;
 
 /** Every 👍/👎, newest first (History page and the recommender's training set). */
@@ -127,8 +128,11 @@ export async function getVotes(): Promise<Vote[]> {
       VOTES_UNAVAILABLE,
     );
     votes.push(...page);
-    if (page.length < VOTE_PAGE) return votes;
+    if (page.length === 0) break; // not `< VOTE_PAGE`: the server's cap may be smaller
   }
+  // A vote from another device between two pages shifts rows, so one could appear twice.
+  const seen = new Set<number>();
+  return votes.filter((v) => !seen.has(v.tmdb_id) && seen.add(v.tmdb_id));
 }
 
 /** Vote, flip, or re-stamp (Rewatch). One row per film, so this is an upsert.

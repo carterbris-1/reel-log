@@ -465,7 +465,11 @@ git push ─► GitHub Actions
   `data-*` release and copies its `manifest.json` plus every file the manifest lists into
   `_site/data/`. With no release it skips. If a listed file is missing from the release,
   the deploy **fails** on purpose, so the live site keeps its last good version instead of
-  publishing broken data.
+  publishing broken data. Drafts and pre-releases are ignored.
+- **Publishing a release doesn't redeploy by itself.** After `gh release create data-…`,
+  run `gh workflow run deploy.yml` (or Actions → Build and deploy → Run workflow). A
+  release trigger was left out on purpose: that run would build the tag's commit, which can
+  be older than `main`.
 - It needs **Settings → Pages → Source: GitHub Actions** (already set for your repo).
 
 ### `.gitignore`
