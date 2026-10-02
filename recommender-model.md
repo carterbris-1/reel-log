@@ -5,7 +5,8 @@
 
 ## 1. Prep pipeline (`recommender/prep.py`)
 
-Run as `recommender/.venv/bin/python recommender/prep.py --stage {join,embed,vectors,extras,all}`.
+Run as `recommender/.venv/bin/python recommender/prep.py --stage {join,embed,vectors,all}`
+(`extras` is task 7, not built yet).
 Each stage reads the previous stage's parquet from `recommender/work/` (git-ignored), so a
 failed stage reruns alone. Logs from the first run (2026-10-02) are quoted below.
 
@@ -87,10 +88,9 @@ nearest to Oppenheimer: Munich: The Edge of War (0.79); … Conspiracy (0.75); S
 ## 2. Published file formats
 
 ```text
-manifest.json   { "version": "2026-10", "count": 12989, "dims": 256, "scale": 0.00613,
+manifest.json   { "version": "2026-10-ac759f25", "count": 12989, "dims": 256, "scale": 0.00613,
                   "genres": ["Action", "Adventure", … 19 names],
-                  "files": { "vectors": "vectors.i8", "catalogue": "catalogue.json",
-                             "onboarding": "onboarding.json" },
+                  "files": { "vectors": "vectors.i8", "catalogue": "catalogue.json" },
                   "bytes": { "vectors": 3325184, "catalogue": 1345390 } }
 vectors.i8      count × 256 int8, row-major. Row i belongs to catalogue index i.
 catalogue.json  { "tmdb": [27205, ...], "title": [...], "year": [2010, ...],
@@ -100,6 +100,12 @@ catalogue.json  { "tmdb": [27205, ...], "title": [...], "year": [2010, ...],
                   "artsy": [0..255], "main": [0|1] }      ← these two added by `extras`
 onboarding.json [tmdb_id × 15]
 ```
+
+`version` is the month plus the first 8 hex digits of a SHA-256 over the published bytes, so
+any change to the data changes it, and an identical rebuild in the same month keeps it. The browser caches
+by version, and the release is tagged `data-<version>`. `files` lists only files that
+exist: the deploy copies exactly these and fails if one is missing. `extras` (task 7) adds
+`onboarding` and recomputes the version.
 
 Bit i of `genres` is `manifest.genres[i]` (TMDB's `/genre/movie/list` order), so the
 client never hard-codes the list. That needs 19 bits, so `uint16` would not fit. Arrays
@@ -212,7 +218,7 @@ sees the change. The main thread sends `vote` only after Supabase confirms the w
    (~5k calls at ≤ 40 req/s ≈ 2–3 min).
 5. Drop movies that are 12+ months old with `votes < 200` (spec §5.5). Rows shift, which
    is fine: votes are keyed by `tmdb_id` and the worker rebuilds columns per version.
-6. Write the files, `gh release create data-YYYY-MM out/* recommender/work/*.npz`, then
+6. Write the files, `gh release create data-<version> out/* recommender/work/*.npz`, then
    `gh workflow run deploy.yml`. A release made with `GITHUB_TOKEN` does **not** trigger
    other workflows on its own, so the explicit dispatch is required.
 

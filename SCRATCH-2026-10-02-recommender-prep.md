@@ -1,11 +1,13 @@
-# SCRATCH 2026-10-02: Recommender spec + data prep (tasks 1, 2, 15)
+# SCRATCH 2026-10-02: Recommender spec, data prep, and data plumbing (tasks 1, 2, 3, 15)
 
 ## Summary
 
 The "For You" recommender spec was filled out into two files, and its first two tasks were
 built and run. `recommender/prep.py` now turns the Hugging Face movie dataset and
 MovieLens 25M into the three files the browser will load: `vectors.i8`, `catalogue.json`,
-and `manifest.json`. Nothing in the site itself (`src/`, `index.html`) has changed yet.
+and `manifest.json`. Task 3 then added the `votes` table, its three `db.ts` functions,
+and a deploy step that copies those files from a GitHub release into the site (see
+"Task 3" at the end). No page uses any of it yet; that starts with task 5.
 
 Building it turned up a real problem the spec hadn't foreseen. The HF plot vectors were
 made in two different text formats, which split the catalogue into two groups that
@@ -277,4 +279,367 @@ shown above. **iPhone:** nothing to try yet. The site doesn't load these files u
   lacks `artsy`/`main` until then.
 - The disk had 13 GB free after this work. The HF model cache (~523 MB) and `.venv` (1.1 GB)
   are the big items.
-- Nothing is committed.
+- Commits `84c16eb` (spec + prep) and `4cae719` (task 3) are local. They're not pushed yet,
+  pending the push review.
+- The `votes` table exists in `schema.sql` only until you run it in the Supabase SQL Editor.
+- ~~`setVote` stamps `voted_at` with the device clock~~: fixed by a server trigger (see
+  "Review fixes" at the end).
+- The deploy step trusts whichever `data-*` release is newest by creation date. A release
+  missing a listed file now fails the deploy (see "Review fixes"), but a release with
+  wrong *content* would still go live.
+
+---
+
+# Task 3: votes table and data plumbing
+
+## Summary
+
+Task 3 connects the data from tasks 1–2 to the site, without a page using it yet:
+- **`votes` table:** stores your 👍/👎, owner-only.
+- **`db.ts`:** gains `getVotes()`, `setVote()` and `removeVote()`.
+- **`deploy.yml`:** copies the newest `data-*` release's files into the site at `/data/`.
+- **First release:** `data-2026-10` is published.
+
+**Stats** (commit `4cae719`): 5 files changed, +89 / −1. That's 4.5% of the 1,981-line
+baseline on its own. The 21% figure above already includes tasks 1–2.
+
+| | Files |
+|---|---|
+| Changed | `supabase/schema.sql` (+19), `src/db.ts` (+23 −1), `src/types.ts` (+10), `.github/workflows/deploy.yml` (+25), `CODE_GUIDE.md` (+12) |
+| Added / deleted | none |
+
+## How it fits together
+
+```text
+prep.py → recommender/out/*  ──(gh release create, run by you)──►  release data-2026-10
+push to main → deploy.yml: build → copy site files → "Add recommender data":
+             newest data-* release → manifest.json, vectors.i8, catalogue.json
+             (+ onboarding.json once task 7 makes it) → _site/data/ → GitHub Pages
+later: worker (task 5) fetches /data/*  ·  For You (task 6) calls setVote → Supabase votes
+```
+
+## Changed files
+
+### `supabase/schema.sql` (lines 45–62, appended)
+
+```sql
+create table if not exists public.votes (
+  user_id   uuid not null default auth.uid() references auth.users on delete cascade,
+  tmdb_id   int  not null,
+  thumb     smallint not null check (thumb in (1, -1)),
+  voted_at  timestamptz not null default now(),
+  primary key (user_id, tmdb_id)
+);
+
+alter table public.votes enable row level security;
+
+drop policy if exists "own votes" on public.votes;
+create policy "own votes" on public.votes for all
+  to authenticated
+  using      (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()));
+```
+
+*Why:* `votes` follows the same pattern as `lists`: `user_id` comes from the login, so the
+browser can't fake it, and the RLS policy keeps the public anon key from reading anyone's
+votes. The primary key `(user_id, tmdb_id)` enforces "one thumb per film", so a flip is
+an upsert. The `check` enforces "a thumb, never a rating". **Not live** until it's run in
+the Supabase SQL Editor.
+
+### `src/types.ts` (lines 95–103, added)
+
+```ts
+/** 👍 = 1, 👎 = -1. A vote is never a rating, just one of these. */
+export type Thumb = 1 | -1;
+
+/** A row of `votes` (For You recommender): one per film you've judged. */
+export interface Vote {
+  tmdb_id: number;
+  thumb: Thumb;
+  voted_at: string;
+}
+```
+
+### `src/db.ts` (lines 107–127 added, import on line 6 widened)
+
+Before → after for the import:
+```ts
+import type { List, ListItem, ListMembership, Movie } from "./types.js";
+```
+```ts
+import type { List, ListItem, ListMembership, Movie, Thumb, Vote } from "./types.js";
+```
+
+New functions, all through the existing `run()` helper (same error handling as lists):
+```ts
+/** Every 👍/👎, newest first (History page and the recommender's training set). */
+export function getVotes(): Promise<Vote[]> {
+  return run(client().from("votes").select("tmdb_id, thumb, voted_at").order("voted_at", { ascending: false }));
+}
+
+/** Vote, flip, or re-stamp (Rewatch). One row per film, so this is an upsert. */
+export function setVote(tmdbId: number, thumb: Thumb): Promise<void> {
+  return run(
+    client().from("votes").upsert(
+      { tmdb_id: tmdbId, thumb, voted_at: new Date().toISOString() },
+      { onConflict: "user_id,tmdb_id" },
+    ),
+  );
+}
+
+/** Forget a vote, so the film can be recommended again. */
+export function removeVote(tmdbId: number): Promise<void> {
+  return run(client().from("votes").delete().eq("tmdb_id", tmdbId));
+}
+```
+
+**Example** (*expected* output: these haven't run against Supabase yet, because the
+table isn't created and no page calls them until task 6):
+```ts
+await setVote(27205, 1);   // 👍 Inception
+await setVote(27205, -1);  // flip: same row, thumb becomes -1
+await getVotes();          // → [{ tmdb_id: 27205, thumb: -1, voted_at: "2026-10-…" }]
+await removeVote(27205);   // → getVotes() returns []
+```
+
+Verified: `npm run typecheck` and `npm run build` both pass.
+
+### `.github/workflows/deploy.yml` (lines 45–68, new step after "Collect site files")
+
+```yaml
+      - name: Add recommender data
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag=$(gh release list --limit 100 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | startswith("data-"))] | sort_by(.createdAt) | last | .tagName // empty')
+          if [ -z "$tag" ]; then
+            echo "No data-* release yet; For You will show its notice."
+            exit 0
+          fi
+          assets=$(gh release view "$tag" --json assets --jq '.assets[].name')
+          mkdir -p _site/data
+          for f in manifest.json vectors.i8 catalogue.json onboarding.json; do
+            if grep -qx "$f" <<<"$assets"; then
+              gh release download "$tag" --dir _site/data --pattern "$f"
+            fi
+          done
+          test -f _site/data/manifest.json || { echo "$tag has no manifest.json"; exit 1; }
+          echo "Added $tag:"; ls -l _site/data
+```
+
+*Why:* the data files stay out of git (spec §3), so they're pulled from the release at
+deploy time. Only the four served files are copied, by name. The prep-only `.npz` files
+and `embed_format.json` stay in the release and never reach the website. No release →
+skip, so deploys can't break (spec risk 6). `onboarding.json` doesn't exist until task 7,
+so missing assets are skipped individually.
+
+**Live test**: the step's script, extracted from the YAML and run locally with
+`GH_REPO=carterbris-1/reel-log bash -e step.sh`:
+
+Before the release existed (actual output):
+```text
+No data-* release yet; For You will show its notice.
+exit=0
+```
+After the release (actual output):
+```text
+Added data-2026-10:
+-rw-r--r--@ 1 kujo  wheel  1345390 Oct  2 08:19 catalogue.json
+-rw-r--r--@ 1 kujo  wheel      585 Oct  2 08:19 manifest.json
+-rw-r--r--@ 1 kujo  wheel  3325184 Oct  2 08:19 vectors.i8
+exit=0
+vectors.i8 identical      ← cmp against recommender/out/vectors.i8
+```
+Not yet tested on a real Actions runner. That happens on the next deploy after the push.
+
+### `CODE_GUIDE.md` (+12)
+
+It adds the three vote functions to the `db.ts` table, a paragraph on `votes` under
+`schema.sql`, and the data step in the `deploy.yml` diagram and bullets. *Why:* the guide
+documents every function, table, and deploy step, so it stays accurate.
+
+## The release: `data-2026-10`
+
+https://github.com/carterbris-1/reel-log/releases/tag/data-2026-10, tagged on `main`, with
+6 assets:
+
+| Asset | Size | Served on site? |
+|---|---|---|
+| `manifest.json` | 585 B | yes |
+| `vectors.i8` | 3,325,184 B | yes |
+| `catalogue.json` | 1,345,390 B | yes |
+| `pca.npz` | 1,949,852 B | no (for `update.py`) |
+| `genome_knn.npz` | 29,799,294 B | no (for `update.py`) |
+| `embed_format.json` | 307 B | no (for `update.py`) |
+
+**How it was created:** I tried `gh release create …`, and Claude Code's auto-mode
+safety check blocked it for publishing data derived from licensed (MovieLens) data. I did
+not work around it. You ran the same command yourself with `!`, after earlier accepting
+the licence risk for personal use (spec risk 2).
+
+## How it was built
+
+- **Copy files by name instead of `--pattern '*.json'`.** A pattern would also have
+  published `embed_format.json`, and `gh release download` errors when a pattern matches
+  nothing, which would break the deploy until `onboarding.json` exists.
+- **"Newest" means newest by `createdAt`**, not tag-name order. Both work for
+  `data-YYYY-MM`, but a hand-made re-release (e.g. `data-2026-10b`) would still win.
+- **`GH_REPO` is set explicitly**, so `gh` doesn't depend on the checkout's git remote.
+- **`setVote` sets `voted_at` explicitly.** An upsert that updates an existing row
+  wouldn't re-apply the `now()` default, and Rewatch (R12) needs a re-stamp.
+- **Commits.** You approved two commits plus the release command. I ran the commits; the
+  release was blocked and run by you. The push is pending its review (CLAUDE.md).
+
+## How to try it
+
+1. Supabase → **SQL Editor → New query** → paste all of `supabase/schema.sql` → **Run**.
+2. After the push deploys, open
+   `https://carterbris-1.github.io/reel-log/data/manifest.json`. Expected: the manifest,
+   with `"count": 12989`. It works on iPhone Safari too, but there's nothing visual to see
+   until task 6.
+3. Under the repo's **Actions → Build and deploy → build**, the "Add recommender data"
+   step should list the three files.
+
+---
+
+# Review fixes (before the first push)
+
+The pre-push review ran the `code-reviewer` agent and `/code-review high` (in a separate
+session) on `origin/main..4cae719`. There were no critical findings, and six "should change"
+items. You chose "fix first". All six are fixed in one follow-up commit.
+
+| # | Found by | Problem | Fix |
+|---|---|---|---|
+| 1 | both | Deploy only checked `manifest.json`; a half-uploaded release could go live | Copy exactly what the manifest lists; fail if any is missing |
+| 2 | /code-review | Manifest listed `onboarding.json`, which nothing writes yet | `files` lists only files that exist |
+| 3 | /code-review | Version was just `2026-10`, so a same-month rebuild would leave phones on stale cached data | Version = month + content hash |
+| 4 | /code-review | `getVotes()` silently stopped at Supabase's 1,000-row cap | Fetch in pages of 1,000 |
+| 5 | /code-review | `voted_at` came from the device clock | Server trigger stamps `now()` |
+| 6 | /code-review | Vote errors said "Lists are temporarily unavailable" | Votes get their own message |
+
+The "fine to keep" items were not changed: a crash in the check-film sanity log, the
+vote-count tiebreak in the MovieLens join, no empty-text guard, partial-sort speed, and
+the loop-vs-single-call deploy download.
+
+### Fix 1: `.github/workflows/deploy.yml` (lines 51–68)
+
+Before: list the release's assets, download any of four hard-coded names that exist, and
+check only `manifest.json`. After:
+
+```yaml
+          mkdir -p _site/data
+          gh release download "$tag" --dir _site/data --pattern manifest.json \
+            || { echo "::error::$tag has no manifest.json"; exit 1; }
+          for f in $(jq -r '.files[]' _site/data/manifest.json); do
+            gh release download "$tag" --dir _site/data --pattern "$f" \
+              || { echo "::error::$tag is missing $f, which its manifest lists"; exit 1; }
+          done
+          echo "Added $tag (version $(jq -r .version _site/data/manifest.json)):"; ls -l _site/data
+```
+
+**Live test** against the existing `data-2026-10` release, which has the old manifest
+listing `onboarding.json` (actual output):
+```text
+no assets match the file pattern
+::error::data-2026-10 is missing onboarding.json, which its manifest lists
+exit=1
+```
+That's the intended failure. It also means **a new release must be published before the
+push**, or the first deploy will fail. The site would keep its current version, but no
+deploys would get through until then.
+
+### Fixes 2 and 3: `recommender/prep.py`
+
+```python
+# recommender/prep.py:250-259
+def data_version(*files: bytes) -> str:
+    """"2026-10-1a2b3c4d": month + a hash of the published bytes.
+
+    Browsers cache the data under this version, so any rebuild that changes a file must
+    change it. Month alone would leave phones on stale files after a same-month rebuild.
+    """
+    digest = hashlib.sha256()
+    for f in files:
+        digest.update(f)
+    return f"{time.strftime('%Y-%m')}-{digest.hexdigest()[:8]}"
+```
+
+The manifest `files` before:
+`{"vectors": "vectors.i8", "catalogue": "catalogue.json", "onboarding": "onboarding.json"}`.
+After: `{"vectors": "vectors.i8", "catalogue": "catalogue.json"}`, with a comment that
+`extras` (task 7) adds `onboarding` and a new version.
+
+**Live example** (actual: `--stage vectors` rerun at 08:23):
+```text
+{"version":"2026-10-ac759f25","count":12989,"files":{"vectors":"vectors.i8","catalogue":"catalogue.json"},"bytes":{"vectors":3325184,"catalogue":1345390}}
+vectors.i8 unchanged      ← cmp against the 07:53 build: the pipeline is deterministic
+```
+The release tag now follows the version: `data-2026-10-ac759f25`.
+
+### Fixes 4–6: `src/db.ts` (lines 16, 26–41, 114–146)
+
+```ts
+const VOTES_UNAVAILABLE = "Your votes are temporarily unavailable. Try again in a moment.";
+```
+`run()` gained an optional message parameter, `unavailable = UNAVAILABLE`, so list calls
+are unchanged.
+
+```ts
+export async function getVotes(): Promise<Vote[]> {
+  const votes: Vote[] = [];
+  for (let from = 0; ; from += VOTE_PAGE) {
+    const page = await run<Vote[]>(
+      client()
+        .from("votes")
+        .select("tmdb_id, thumb, voted_at")
+        .order("voted_at", { ascending: false })
+        .order("tmdb_id") // ties need a fixed order, or pages could overlap
+        .range(from, from + VOTE_PAGE - 1),
+      VOTES_UNAVAILABLE,
+    );
+    votes.push(...page);
+    if (page.length < VOTE_PAGE) return votes;
+  }
+}
+```
+
+`setVote` before: `upsert({ tmdb_id: tmdbId, thumb, voted_at: new Date().toISOString() }, …)`.
+After: `upsert({ tmdb_id: tmdbId, thumb }, { onConflict: "user_id,tmdb_id" })`, because the
+server now sets the time.
+
+### Fix 5: `supabase/schema.sql` (lines 64–79, appended to the votes block)
+
+```sql
+create or replace function public.stamp_vote() returns trigger
+  language plpgsql
+  set search_path = ''
+as $$
+begin
+  new.voted_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists stamp_vote on public.votes;
+create trigger stamp_vote before insert or update on public.votes
+  for each row execute function public.stamp_vote();
+```
+`before … update` also fires on the upsert's `do update`, so a flip or a Rewatch 👍
+re-stamps. `set search_path = ''` is the hardening Supabase's security advisor asks for.
+**Expected** behaviour: not run yet, since you haven't applied the SQL.
+
+### Docs
+
+The model doc §2 now has the new manifest example and explains the version. The spec
+uses `data-<version>` instead of `data-YYYY-MM`. CODE_GUIDE describes the paged
+`getVotes`, the trigger, the vote error message, and the deploy step's fail-on-missing.
+`npm run typecheck` and `npm run build` pass.
+
+### Release replacement (yours to run)
+
+1. Publish `data-2026-10-ac759f25` with the rebuilt `out/` files. It becomes the newest,
+   so the deploy picks it.
+2. Optionally delete the old `data-2026-10` release and tag. It's harmless once it isn't
+   the newest, but it can never deploy again.

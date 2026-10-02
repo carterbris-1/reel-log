@@ -28,7 +28,7 @@ about 13k movies against your votes on every tap.
   and writes the published files (model §1–2).
 - R2. `recommender/update.py` runs monthly in GitHub Actions. It adds new TMDB releases,
   embeds them with the same pinned model and text format, refreshes `popularity`/`vote_count`/rating
-  for the last 2 years, publishes a `data-YYYY-MM` release, and redeploys (model §5).
+  for the last 2 years, publishes a `data-<version>` release, and redeploys (model §5).
 - R3. HF embeddings are stringified lists. Rows that fail to parse or aren't 768-d are
   dropped and counted in the prep log.
 
@@ -99,7 +99,7 @@ about 13k movies against your votes on every tap.
 | Prep | Python 3.12, `polars`, `numpy`, `scikit-learn` (PCA, KMeans, Ridge), `huggingface_hub`, pinned in `recommender/requirements.txt` | ~7.3 GB of downloads (HF parquet 7 GB, ML-25M 250 MB). Needs lazy filtering to stay under ~8 GB RAM. Runs locally, not in CI |
 | Embedding | `nomic-embed-text-v1.5` (768-d, revision pinned) via `sentence-transformers`, `transformers<5` | ~4 min for the whole catalogue on Apple MPS. New films must use the saved text format (§5.3) |
 | Monthly job | Actions cron `0 6 1 * *`, `update.py`, `permissions: contents: write, actions: write` | Needs a `TMDB_API_KEY` repo secret. Model download cached with `actions/cache`. Must dispatch `deploy.yml` itself |
-| Data hosting | GitHub **Release** `data-YYYY-MM` assets, downloaded by `deploy.yml` into `_site/data/` | Same-origin, so no CORS. Binaries stay out of git history. A data update needs a redeploy |
+| Data hosting | GitHub **Release** `data-<version>` assets (version = month + content hash), downloaded by `deploy.yml` into `_site/data/` | Same-origin, so no CORS. Binaries stay out of git history. A data update needs a redeploy |
 | Scoring | TypeScript in a module **Web Worker**, no libraries, built by a second `tsc` config (model §4) | Pure typed-array math. The main thread never blocks on a vote. Needs iOS 15+ |
 | Tests | `node --test` on compiled `js/rec/*.test.js` (Node 24, already in CI) | First tests in the repo. Only the pure math is tested, not the UI |
 | Votes | Supabase table `votes` with RLS, same project as lists | Syncs phone ↔ computer. `keepalive.yml` already handles the 7-day pause |
@@ -202,8 +202,9 @@ on cards, and syncing cooldown through Supabase.
    ≥ 30% of genome films' neighbours, PCA recall ≥ 0.80, and the decoded neighbours of
    *Alien* (348) and *Dune* (438631) are recognisably right. ✅ 2026-10-02
 3. **Votes table and data plumbing.** Add `votes` to `schema.sql` and the three `db.ts`
-   functions. Publish a first `data-2026-10` release by hand. `deploy.yml` downloads the
-   newest `data-*` release into `_site/data/` and skips it if there's none. Depends on 2.
+   functions. Publish a first `data-<version>` release by hand. `deploy.yml` copies the
+   files the newest `data-*` release's manifest lists, skipping if there's no release and
+   failing if one is missing. Depends on 2.
    *Done when:* the live site serves `/data/manifest.json`, and a deploy with no release
    still succeeds.
 4. **Worker build and test setup** (model §4). Depends on nothing. *Done when:*
@@ -244,7 +245,7 @@ on cards, and syncing cooldown through Supabase.
 ### Phase D: Monthly freshness
 15. **Embedding format** (§5.3). ✅ Folded into task 2: `embed_format.json` written.
 16. **`update.py` and monthly workflow** (R2, §5.6). Depends on 2, 7. *Done when:* a
-    manual `workflow_dispatch` publishes `data-YYYY-MM` with last month's releases, the
+    manual `workflow_dispatch` publishes `data-<version>` with last month's releases, the
     site redeploys on its own, and the browser picks up the new version on its next load.
 
 ## 8. Risks and gotchas

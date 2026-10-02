@@ -9,6 +9,7 @@ reruns on its own. Downloads are cached in recommender/cache/.
 
 import argparse
 import gzip
+import hashlib
 import json
 import sys
 import time
@@ -43,7 +44,6 @@ WEIGHT_GENOME = 0.6  # plot gets the rest
 IMPUTE_K = 5
 IMPUTE_TEMP = 0.05
 MIN_PCA_RECALL = 0.80
-DATA_VERSION = time.strftime("%Y-%m")
 CHECK_FILMS = [27205, 348, 862, 438631, 872585]  # Inception, Alien, Toy Story, Dune, Oppenheimer
 EMBED_MODEL = "nomic-ai/nomic-embed-text-v1.5"
 EMBED_REVISION = "e9b6763023c676ca8431644204f50c2b100d9aab"
@@ -247,6 +247,18 @@ def stage_embed() -> None:
 
 # ── Stage: vectors ────────────────────────────────────────────────────────────
 
+def data_version(*files: bytes) -> str:
+    """"2026-10-1a2b3c4d": month + a hash of the published bytes.
+
+    Browsers cache the data under this version, so any rebuild that changes a file must
+    change it. Month alone would leave phones on stale files after a same-month rebuild.
+    """
+    digest = hashlib.sha256()
+    for f in files:
+        digest.update(f)
+    return f"{time.strftime('%Y-%m')}-{digest.hexdigest()[:8]}"
+
+
 def normalise(m: np.ndarray) -> np.ndarray:
     n = np.linalg.norm(m, axis=1, keepdims=True)
     return m / np.where(n == 0, 1, n)
@@ -379,8 +391,10 @@ def stage_vectors() -> None:
     cat_bytes = json.dumps(catalogue, ensure_ascii=False, separators=(",", ":")).encode()
     (OUT / "catalogue.json").write_bytes(cat_bytes)
     manifest = {
-        "version": DATA_VERSION, "count": n, "dims": DIMS, "scale": 1 / s, "genres": GENRES,
-        "files": {"vectors": "vectors.i8", "catalogue": "catalogue.json", "onboarding": "onboarding.json"},
+        "version": data_version(q.tobytes(), cat_bytes), "count": n, "dims": DIMS, "scale": 1 / s,
+        "genres": GENRES,
+        # Only files that exist. `extras` (task 7) adds onboarding.json and a new version.
+        "files": {"vectors": "vectors.i8", "catalogue": "catalogue.json"},
         "bytes": {"vectors": q.nbytes, "catalogue": len(cat_bytes)},
     }
     (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2))
@@ -388,6 +402,7 @@ def stage_vectors() -> None:
         f"wrote vectors.i8 ({q.nbytes / 1e6:.1f} MB), catalogue.json ({len(cat_bytes) / 1e6:.1f} MB, "
         f"{len(gzip.compress(cat_bytes)) / 1e6:.1f} MB gzipped), manifest.json"
     )
+    log(f"data version {manifest['version']} → publish as release data-{manifest['version']}")
 
     # Sanity check, decoded from the file just written.
     q_file = np.frombuffer((OUT / "vectors.i8").read_bytes(), dtype=np.int8).reshape(n, DIMS)

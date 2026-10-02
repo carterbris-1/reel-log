@@ -60,3 +60,19 @@ create policy "own votes" on public.votes for all
   to authenticated
   using      (user_id = (select auth.uid()))
   with check (user_id = (select auth.uid()));
+
+-- The server stamps every vote and re-vote, so History order and the 60-day Rewatch rule
+-- don't depend on each device's clock. Fires on the upsert's update too (flip / re-stamp).
+create or replace function public.stamp_vote() returns trigger
+  language plpgsql
+  set search_path = ''
+as $$
+begin
+  new.voted_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists stamp_vote on public.votes;
+create trigger stamp_vote before insert or update on public.votes
+  for each row execute function public.stamp_vote();

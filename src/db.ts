@@ -13,6 +13,7 @@ export const supabase: SupabaseClient | null = dbConfigured
   : null;
 
 export const UNAVAILABLE = "Lists are temporarily unavailable. Try again in a moment.";
+const VOTES_UNAVAILABLE = "Your votes are temporarily unavailable. Try again in a moment.";
 
 /** The client, for code that only runs once Supabase is configured. */
 function client(): SupabaseClient {
@@ -23,16 +24,19 @@ function client(): SupabaseClient {
 // Supabase returns { data, error } instead of throwing; convert to exceptions so
 // callers can use try/catch. Network failures reject the promise itself.
 // `T` is the row shape we asked for in select(...) — see types.ts.
-async function run<T>(query: PromiseLike<{ data: unknown; error: unknown }>): Promise<T> {
+async function run<T>(
+  query: PromiseLike<{ data: unknown; error: unknown }>,
+  unavailable = UNAVAILABLE,
+): Promise<T> {
   let result: { data: unknown; error: unknown };
   try {
     result = await query;
   } catch {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailable);
   }
   if (result.error) {
     console.error(result.error);
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailable);
   }
   return result.data as T;
 }
@@ -106,22 +110,37 @@ export function removeFromList(listId: string, tmdbId: number): Promise<void> {
 
 // ── For You votes ─────────────────────────────────────────────────────────────
 
+/** Supabase returns at most 1,000 rows per request, so votes are fetched in pages. */
+const VOTE_PAGE = 1000;
+
 /** Every 👍/👎, newest first (History page and the recommender's training set). */
-export function getVotes(): Promise<Vote[]> {
-  return run(client().from("votes").select("tmdb_id, thumb, voted_at").order("voted_at", { ascending: false }));
+export async function getVotes(): Promise<Vote[]> {
+  const votes: Vote[] = [];
+  for (let from = 0; ; from += VOTE_PAGE) {
+    const page = await run<Vote[]>(
+      client()
+        .from("votes")
+        .select("tmdb_id, thumb, voted_at")
+        .order("voted_at", { ascending: false })
+        .order("tmdb_id") // ties need a fixed order, or pages could overlap
+        .range(from, from + VOTE_PAGE - 1),
+      VOTES_UNAVAILABLE,
+    );
+    votes.push(...page);
+    if (page.length < VOTE_PAGE) return votes;
+  }
 }
 
-/** Vote, flip, or re-stamp (Rewatch). One row per film, so this is an upsert. */
+/** Vote, flip, or re-stamp (Rewatch). One row per film, so this is an upsert.
+ *  The database stamps voted_at (trigger in schema.sql), so device clocks don't matter. */
 export function setVote(tmdbId: number, thumb: Thumb): Promise<void> {
   return run(
-    client().from("votes").upsert(
-      { tmdb_id: tmdbId, thumb, voted_at: new Date().toISOString() },
-      { onConflict: "user_id,tmdb_id" },
-    ),
+    client().from("votes").upsert({ tmdb_id: tmdbId, thumb }, { onConflict: "user_id,tmdb_id" }),
+    VOTES_UNAVAILABLE,
   );
 }
 
 /** Forget a vote, so the film can be recommended again. */
 export function removeVote(tmdbId: number): Promise<void> {
-  return run(client().from("votes").delete().eq("tmdb_id", tmdbId));
+  return run(client().from("votes").delete().eq("tmdb_id", tmdbId), VOTES_UNAVAILABLE);
 }

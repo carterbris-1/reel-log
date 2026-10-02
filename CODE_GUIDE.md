@@ -448,7 +448,7 @@ checks our code against the same version's types. **Keep the two version numbers
 git push ─► GitHub Actions
              ├─ build job:  checkout → install Node 24 → npm ci → npm run build
              │              → copy index.html, styles.css, manifest, icons/, js/ into _site/
-             │              → add the newest data-YYYY-MM release's files into _site/data/
+             │              → add the newest data-* release's files into _site/data/
              │              → upload _site/ as the Pages artifact
              └─ deploy job: publish that artifact to https://carterbris-1.github.io/reel-log/
 ```
@@ -462,8 +462,10 @@ git push ─► GitHub Actions
 - **`concurrency: pages`** means two quick pushes deploy one after the other rather than
   colliding.
 - **Recommender data comes from a GitHub release**, not git. The step picks the newest
-  `data-*` release and copies `manifest.json`, `vectors.i8`, `catalogue.json`, and
-  `onboarding.json` into `_site/data/`. With no release it skips, so deploys never break.
+  `data-*` release and copies its `manifest.json` plus every file the manifest lists into
+  `_site/data/`. With no release it skips. If a listed file is missing from the release,
+  the deploy **fails** on purpose, so the live site keeps its last good version instead of
+  publishing broken data.
 - It needs **Settings → Pages → Source: GitHub Actions** (already set for your repo).
 
 ### `.gitignore`
@@ -733,7 +735,7 @@ again in a moment."* The technical details go to the browser console for debuggi
 | `deleteList(id)` | List page | `delete from lists where id = …` (its films go too, see §7) |
 | `addToList(listId, movie)` | Panel | insert, ignoring duplicates |
 | `removeFromList(listId, tmdbId)` | Panel, List page | `delete from list_items where …` |
-| `getVotes()` | For You (coming) | every 👍/👎, newest first |
+| `getVotes()` | For You (coming) | every 👍/👎, newest first, fetched 1,000 at a time (Supabase's per-request cap) |
 | `setVote(tmdbId, thumb)` | For You (coming) | upsert on `(user_id, tmdb_id)`: vote, flip, or re-stamp |
 | `removeVote(tmdbId)` | History (coming) | `delete from votes where tmdb_id = …` |
 
@@ -1331,7 +1333,9 @@ lists                                   list_items
 `votes` (For You recommender, see `recommender-spec.md`) has `user_id`, `tmdb_id`,
 `thumb` (`1` or `-1`, enforced by a `check`), and `voted_at`. Its primary key is
 `(user_id, tmdb_id)`, so a film holds at most one vote, and flipping one is an upsert.
-It has the same owner-only RLS policy as `lists`.
+It has the same owner-only RLS policy as `lists`. A `before insert or update` trigger
+(`stamp_vote`) sets `voted_at = now()`, so vote times come from the server, not the
+device's clock. Vote errors say "Your votes are temporarily unavailable", not "Lists".
 
 #### Row-level security (RLS): the part that keeps your data private
 

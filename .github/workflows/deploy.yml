@@ -45,7 +45,9 @@ jobs:
       # For You recommender data: the files the browser loads, from the newest data-YYYY-MM
       # release (built by recommender/prep.py). Kept out of git, so they're added here.
       # No release yet → skipped, and For You shows its "data unavailable" notice.
-      # The release's .npz/embed_format.json are prep-only and are not published.
+      # The manifest decides what's served: only the files it lists are copied, and the
+      # deploy fails if any is missing, so a broken release can't go live half-uploaded.
+      # The release's .npz/embed_format.json aren't listed, so they're never published.
       - name: Add recommender data
         env:
           GH_TOKEN: ${{ github.token }}
@@ -57,15 +59,14 @@ jobs:
             echo "No data-* release yet; For You will show its notice."
             exit 0
           fi
-          assets=$(gh release view "$tag" --json assets --jq '.assets[].name')
           mkdir -p _site/data
-          for f in manifest.json vectors.i8 catalogue.json onboarding.json; do
-            if grep -qx "$f" <<<"$assets"; then
-              gh release download "$tag" --dir _site/data --pattern "$f"
-            fi
+          gh release download "$tag" --dir _site/data --pattern manifest.json \
+            || { echo "::error::$tag has no manifest.json"; exit 1; }
+          for f in $(jq -r '.files[]' _site/data/manifest.json); do
+            gh release download "$tag" --dir _site/data --pattern "$f" \
+              || { echo "::error::$tag is missing $f, which its manifest lists"; exit 1; }
           done
-          test -f _site/data/manifest.json || { echo "$tag has no manifest.json"; exit 1; }
-          echo "Added $tag:"; ls -l _site/data
+          echo "Added $tag (version $(jq -r .version _site/data/manifest.json)):"; ls -l _site/data
 
       - uses: actions/upload-pages-artifact@v5
         with:
