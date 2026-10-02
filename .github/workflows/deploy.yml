@@ -42,6 +42,31 @@ jobs:
           mkdir _site
           cp -R index.html styles.css manifest.webmanifest icons js _site/
 
+      # For You recommender data: the files the browser loads, from the newest data-YYYY-MM
+      # release (built by recommender/prep.py). Kept out of git, so they're added here.
+      # No release yet → skipped, and For You shows its "data unavailable" notice.
+      # The release's .npz/embed_format.json are prep-only and are not published.
+      - name: Add recommender data
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag=$(gh release list --limit 100 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | startswith("data-"))] | sort_by(.createdAt) | last | .tagName // empty')
+          if [ -z "$tag" ]; then
+            echo "No data-* release yet; For You will show its notice."
+            exit 0
+          fi
+          assets=$(gh release view "$tag" --json assets --jq '.assets[].name')
+          mkdir -p _site/data
+          for f in manifest.json vectors.i8 catalogue.json onboarding.json; do
+            if grep -qx "$f" <<<"$assets"; then
+              gh release download "$tag" --dir _site/data --pattern "$f"
+            fi
+          done
+          test -f _site/data/manifest.json || { echo "$tag has no manifest.json"; exit 1; }
+          echo "Added $tag:"; ls -l _site/data
+
       - uses: actions/upload-pages-artifact@v5
         with:
           path: _site

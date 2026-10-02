@@ -92,6 +92,16 @@ export interface ListMembership {
   contains: boolean;
 }
 
+/** 👍 = 1, 👎 = -1. A vote is never a rating, just one of these. */
+export type Thumb = 1 | -1;
+
+/** A row of `votes` (For You recommender): one per film you've judged. */
+export interface Vote {
+  tmdb_id: number;
+  thumb: Thumb;
+  voted_at: string;
+}
+
 // ── App plumbing ──────────────────────────────────────────────────────────────
 
 /** What the router hands every view. See app.ts. */

@@ -3,7 +3,7 @@
 // node_modules is only there so TypeScript knows its types.
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./config.js";
-import type { List, ListItem, ListMembership, Movie } from "./types.js";
+import type { List, ListItem, ListMembership, Movie, Thumb, Vote } from "./types.js";
 
 export const dbConfigured =
   !SUPABASE_URL.includes("YOUR_PROJECT") && !SUPABASE_ANON_KEY.startsWith("YOUR_");
@@ -102,4 +102,26 @@ export function addToList(listId: string, movie: Movie): Promise<void> {
 
 export function removeFromList(listId: string, tmdbId: number): Promise<void> {
   return run(client().from("list_items").delete().eq("list_id", listId).eq("tmdb_id", tmdbId));
+}
+
+// ── For You votes ─────────────────────────────────────────────────────────────
+
+/** Every 👍/👎, newest first (History page and the recommender's training set). */
+export function getVotes(): Promise<Vote[]> {
+  return run(client().from("votes").select("tmdb_id, thumb, voted_at").order("voted_at", { ascending: false }));
+}
+
+/** Vote, flip, or re-stamp (Rewatch). One row per film, so this is an upsert. */
+export function setVote(tmdbId: number, thumb: Thumb): Promise<void> {
+  return run(
+    client().from("votes").upsert(
+      { tmdb_id: tmdbId, thumb, voted_at: new Date().toISOString() },
+      { onConflict: "user_id,tmdb_id" },
+    ),
+  );
+}
+
+/** Forget a vote, so the film can be recommended again. */
+export function removeVote(tmdbId: number): Promise<void> {
+  return run(client().from("votes").delete().eq("tmdb_id", tmdbId));
 }

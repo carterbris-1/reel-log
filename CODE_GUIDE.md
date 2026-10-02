@@ -448,6 +448,7 @@ checks our code against the same version's types. **Keep the two version numbers
 git push ─► GitHub Actions
              ├─ build job:  checkout → install Node 24 → npm ci → npm run build
              │              → copy index.html, styles.css, manifest, icons/, js/ into _site/
+             │              → add the newest data-YYYY-MM release's files into _site/data/
              │              → upload _site/ as the Pages artifact
              └─ deploy job: publish that artifact to https://carterbris-1.github.io/reel-log/
 ```
@@ -460,6 +461,9 @@ git push ─► GitHub Actions
   same versions you have.
 - **`concurrency: pages`** means two quick pushes deploy one after the other rather than
   colliding.
+- **Recommender data comes from a GitHub release**, not git. The step picks the newest
+  `data-*` release and copies `manifest.json`, `vectors.i8`, `catalogue.json`, and
+  `onboarding.json` into `_site/data/`. With no release it skips, so deploys never break.
 - It needs **Settings → Pages → Source: GitHub Actions** (already set for your repo).
 
 ### `.gitignore`
@@ -729,6 +733,9 @@ again in a moment."* The technical details go to the browser console for debuggi
 | `deleteList(id)` | List page | `delete from lists where id = …` (its films go too, see §7) |
 | `addToList(listId, movie)` | Panel | insert, ignoring duplicates |
 | `removeFromList(listId, tmdbId)` | Panel, List page | `delete from list_items where …` |
+| `getVotes()` | For You (coming) | every 👍/👎, newest first |
+| `setVote(tmdbId, thumb)` | For You (coming) | upsert on `(user_id, tmdb_id)`: vote, flip, or re-stamp |
+| `removeVote(tmdbId)` | History (coming) | `delete from votes where tmdb_id = …` |
 
 Notice that **no function passes `user_id`**. The database fills it in from the signed-in
 session and the security rules filter by it. The browser can't claim to be someone else.
@@ -1320,6 +1327,11 @@ lists                                   list_items
 | `references lists on delete cascade` | Deleting a list automatically deletes its films |
 | `references auth.users on delete cascade` | Deleting your account deletes your lists |
 | index on `lists(user_id)` | Keeps "find my lists" fast |
+
+`votes` (For You recommender, see `recommender-spec.md`) has `user_id`, `tmdb_id`,
+`thumb` (`1` or `-1`, enforced by a `check`), and `voted_at`. Its primary key is
+`(user_id, tmdb_id)`, so a film holds at most one vote, and flipping one is an upsert.
+It has the same owner-only RLS policy as `lists`.
 
 #### Row-level security (RLS): the part that keeps your data private
 

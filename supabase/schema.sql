@@ -41,3 +41,22 @@ create policy "own items" on public.list_items for all
     select 1 from public.lists l
     where l.id = list_items.list_id and l.user_id = (select auth.uid())
   ));
+
+-- For You recommender: one 👍 (1) or 👎 (-1) per film. Flipping a vote is an upsert on the
+-- primary key, so a film can never hold two votes. Stores only the TMDB id, so new
+-- recommender data releases never strand old votes.
+create table if not exists public.votes (
+  user_id   uuid not null default auth.uid() references auth.users on delete cascade,
+  tmdb_id   int  not null,
+  thumb     smallint not null check (thumb in (1, -1)),
+  voted_at  timestamptz not null default now(),
+  primary key (user_id, tmdb_id)
+);
+
+alter table public.votes enable row level security;
+
+drop policy if exists "own votes" on public.votes;
+create policy "own votes" on public.votes for all
+  to authenticated
+  using      (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()));
