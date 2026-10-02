@@ -14,13 +14,14 @@ made in two different text formats, which split the catalogue into two groups th
 barely recommended each other. Prep now re-embeds every film itself, which fixed it and
 also made spec task 15 (embedding-format check) unnecessary.
 
-**Change stats** (`change-percent.sh 3dc6800`): **21.0%**: 416 lines changed against a
-1,981-line baseline (`.md` excluded from the count).
+**Change stats** (`change-percent.sh 3dc6800`, all 5 commits): **29.1%**: 576 lines changed
+against a 1,981-line baseline (`.md` excluded from the count). Including docs: 11 files,
++1,920 / −4.
 
 | | Files |
 |---|---|
-| Added | `recommender/prep.py` (409 lines), `recommender/requirements.txt` (10), `recommender-model.md` (222) |
-| Changed | `recommender-spec.md` (was an untracked draft; now 298 lines), `.gitignore` (+7) |
+| Added | `recommender/prep.py` (437 lines), `recommender/requirements.txt` (10), `recommender-model.md` (228), this file |
+| Changed | `recommender-spec.md` (was an untracked draft; now 300 lines), `src/db.ts` (+55 −4), `supabase/schema.sql` (+35), `.github/workflows/deploy.yml` (+32), `CODE_GUIDE.md` (+20), `src/types.ts` (+10), `.gitignore` (+7) |
 | Deleted | none |
 | Generated, git-ignored | `recommender/{.venv,cache,work,out}/` |
 
@@ -51,7 +52,7 @@ reads the previous stage's file, so one can rerun alone.
 ~10 GB into memory. Reading page by page keeps one 4,096-row batch in memory at a time:
 
 ```python
-# recommender/prep.py:108-121
+# recommender/prep.py:111-124
     fs = HfFileSystem()
     total = fs.info(HF_PATH)["size"]
     with fs.open(HF_PATH, "rb", block_size=32 * 2**20) as fh:
@@ -71,7 +72,7 @@ reads the previous stage's file, so one can rerun alone.
 **Re-embedding** with a pinned model revision:
 
 ```python
-# recommender/prep.py:207-212
+# recommender/prep.py:216-221
 def embedder():
     import torch
     from sentence_transformers import SentenceTransformer
@@ -83,7 +84,7 @@ def embedder():
 **kNN genome imputation** for the 4,507 films MovieLens has no genome scores for:
 
 ```python
-# recommender/prep.py:267-277
+# recommender/prep.py:288-298
 def knn_impute(query: np.ndarray, ref: np.ndarray, ref_genome: np.ndarray) -> np.ndarray:
     """Softmax-weighted mean of the genome blocks of the IMPUTE_K closest reference films."""
     out = np.empty((len(query), ref_genome.shape[1]), dtype=np.float32)
@@ -100,7 +101,7 @@ def knn_impute(query: np.ndarray, ref: np.ndarray, ref_genome: np.ndarray) -> np
 **PCA judged by neighbour recall, int8 scaled to the max:**
 
 ```python
-# recommender/prep.py:335-351
+# recommender/prep.py:356-372
     # PCA is judged by whether neighbours survive it, not by a variance target.
     pca = PCA(DIMS, svd_solver="randomized", random_state=0).fit(X)
     Z = normalise(pca.transform(X).astype(np.float32))
@@ -274,19 +275,23 @@ shown above. **iPhone:** nothing to try yet. The site doesn't load these files u
   "feel"; the plot block carries content.
 - `trust_remote_code` runs nomic's downloaded Python. The model revision is pinned, but
   the remote code repo (`nomic-ai/nomic-bert-2048`) is not separately pinned.
-- `DATA_VERSION` comes from the clock, so rerunning in November renames the release.
+- The data version is month + content hash, so an identical rebuild in a later month gets
+  a new version, which means a harmless re-download.
 - `extras` (artsy score, `main` flag, onboarding) is task 7, not built yet. `catalogue.json`
   lacks `artsy`/`main` until then.
 - The disk had 13 GB free after this work. The HF model cache (~523 MB) and `.venv` (1.1 GB)
   are the big items.
-- Commits `84c16eb` (spec + prep) and `4cae719` (task 3) are local. They're not pushed yet,
-  pending the push review.
-- The `votes` table exists in `schema.sql` only until you run it in the Supabase SQL Editor.
-- ~~`setVote` stamps `voted_at` with the device clock~~: fixed by a server trigger (see
-  "Review fixes" at the end).
-- The deploy step trusts whichever `data-*` release is newest by creation date. A release
-  missing a listed file now fails the deploy (see "Review fixes"), but a release with
-  wrong *content* would still go live.
+- The work is in 5 commits: `84c16eb` (spec + prep), `4cae719` (task 3), and review fixes
+  `be32e98`, `aa72a86`, `4bb9ccb`.
+- You reported running `supabase/schema.sql` (with the `stamp_vote` trigger) in the SQL
+  Editor on 2026-10-02. That hasn't been checked from here, since the site has only the
+  public key.
+- The deploy ships whichever published `data-*` release is newest by `publishedAt`. A missing
+  or oddly named listed file, or a malformed manifest, fails the deploy. A release with
+  wrong *content* would still go live, and there's no code↔data format pin yet (follow-up
+  for task 7).
+- `getVotes` can still miss a vote in one case: more than 1,000 votes *and* a vote cast
+  while the pages load. It also makes one extra request per load to confirm the end.
 
 ---
 
@@ -298,10 +303,10 @@ Task 3 connects the data from tasks 1–2 to the site, without a page using it y
 - **`votes` table:** stores your 👍/👎, owner-only.
 - **`db.ts`:** gains `getVotes()`, `setVote()` and `removeVote()`.
 - **`deploy.yml`:** copies the newest `data-*` release's files into the site at `/data/`.
-- **First release:** `data-2026-10` is published.
+- **Releases:** `data-2026-10` first, then `data-2026-10-ac759f25`, which is the live one.
 
-**Stats** (commit `4cae719`): 5 files changed, +89 / −1. That's 4.5% of the 1,981-line
-baseline on its own. The 21% figure above already includes tasks 1–2.
+**Stats** (commit `4cae719` as first written): 5 files changed, +89 / −1. That's 4.5% of
+the baseline on its own. The review fixes then grew these files; the totals are at the top.
 
 | | Files |
 |---|---|
@@ -320,14 +325,20 @@ later: worker (task 5) fetches /data/*  ·  For You (task 6) calls setVote → S
 
 ## Changed files
 
-### `supabase/schema.sql` (lines 45–62, appended)
+These excerpts are the **final code at `4bb9ccb`**, after all review rounds. How each part
+changed along the way is under "Review fixes" below.
+
+### `supabase/schema.sql` (lines 45–78, appended)
 
 ```sql
+-- For You recommender: one 👍 (1) or 👎 (-1) per film. Flipping a vote is an upsert on the
+-- primary key, so a film can never hold two votes. Stores only the TMDB id, so new
+-- recommender data releases never strand old votes.
 create table if not exists public.votes (
   user_id   uuid not null default auth.uid() references auth.users on delete cascade,
   tmdb_id   int  not null,
   thumb     smallint not null check (thumb in (1, -1)),
-  voted_at  timestamptz not null default now(),
+  voted_at  timestamptz not null default now(),  -- the stamp_vote trigger below is what sets it
   primary key (user_id, tmdb_id)
 );
 
@@ -338,13 +349,30 @@ create policy "own votes" on public.votes for all
   to authenticated
   using      (user_id = (select auth.uid()))
   with check (user_id = (select auth.uid()));
+
+-- The server stamps every vote and re-vote, so History order and the 60-day Rewatch rule
+-- don't depend on each device's clock. Fires on the upsert's update too (flip / re-stamp).
+create or replace function public.stamp_vote() returns trigger
+  language plpgsql
+  set search_path = ''
+as $$
+begin
+  new.voted_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists stamp_vote on public.votes;
+create trigger stamp_vote before insert or update on public.votes
+  for each row execute function public.stamp_vote();
 ```
 
 *Why:* `votes` follows the same pattern as `lists`: `user_id` comes from the login, so the
 browser can't fake it, and the RLS policy keeps the public anon key from reading anyone's
 votes. The primary key `(user_id, tmdb_id)` enforces "one thumb per film", so a flip is
-an upsert. The `check` enforces "a thumb, never a rating". **Not live** until it's run in
-the Supabase SQL Editor.
+an upsert. The `check` enforces "a thumb, never a rating". The trigger stamps every
+insert and update with the server's time, so History order and the 60-day Rewatch rule
+don't depend on a device's clock.
 
 ### `src/types.ts` (lines 95–103, added)
 
@@ -360,7 +388,7 @@ export interface Vote {
 }
 ```
 
-### `src/db.ts` (lines 107–127 added, import on line 6 widened)
+### `src/db.ts` (line 16, lines 27–42, lines 111–152; import on line 6 widened)
 
 Before → after for the import:
 ```ts
@@ -370,97 +398,149 @@ import type { List, ListItem, ListMembership, Movie } from "./types.js";
 import type { List, ListItem, ListMembership, Movie, Thumb, Vote } from "./types.js";
 ```
 
-New functions, all through the existing `run()` helper (same error handling as lists):
+`run()` takes an optional error message, so vote failures don't say "Lists":
 ```ts
+export const UNAVAILABLE = "Lists are temporarily unavailable. Try again in a moment.";
+const VOTES_UNAVAILABLE = "Your votes are temporarily unavailable. Try again in a moment.";
+```
+```ts
+async function run<T>(
+  query: PromiseLike<{ data: unknown; error: unknown }>,
+  unavailable = UNAVAILABLE,
+): Promise<T> {
+  let result: { data: unknown; error: unknown };
+  try {
+    result = await query;
+  } catch {
+    throw new Error(unavailable);
+  }
+  if (result.error) {
+    console.error(result.error);
+    throw new Error(unavailable);
+  }
+  return result.data as T;
+}
+```
+
+The vote functions:
+```ts
+// ── For You votes ─────────────────────────────────────────────────────────────
+
+/** Supabase returns at most 1,000 rows per request (less if Max Rows is set lower), so
+ *  votes are fetched in pages until one comes back empty. */
+const VOTE_PAGE = 1000;
+
 /** Every 👍/👎, newest first (History page and the recommender's training set). */
-export function getVotes(): Promise<Vote[]> {
-  return run(client().from("votes").select("tmdb_id, thumb, voted_at").order("voted_at", { ascending: false }));
+export async function getVotes(): Promise<Vote[]> {
+  const votes: Vote[] = [];
+  // Advance by what actually came back, not VOTE_PAGE: a smaller server cap returns
+  // fewer rows, and jumping 1,000 ahead would skip the rest. Stop on an empty page.
+  for (;;) {
+    const page = await run<Vote[]>(
+      client()
+        .from("votes")
+        .select("tmdb_id, thumb, voted_at")
+        .order("voted_at", { ascending: false })
+        .order("tmdb_id") // ties need a fixed order, or pages could overlap
+        .range(votes.length, votes.length + VOTE_PAGE - 1),
+      VOTES_UNAVAILABLE,
+    );
+    if (page.length === 0) break;
+    votes.push(...page);
+  }
+  // A vote from another device between two pages shifts rows, so one could appear twice.
+  const seen = new Set<number>();
+  return votes.filter((v) => !seen.has(v.tmdb_id) && seen.add(v.tmdb_id));
 }
 
-/** Vote, flip, or re-stamp (Rewatch). One row per film, so this is an upsert. */
+/** Vote, flip, or re-stamp (Rewatch). One row per film, so this is an upsert.
+ *  The database stamps voted_at (trigger in schema.sql), so device clocks don't matter. */
 export function setVote(tmdbId: number, thumb: Thumb): Promise<void> {
   return run(
-    client().from("votes").upsert(
-      { tmdb_id: tmdbId, thumb, voted_at: new Date().toISOString() },
-      { onConflict: "user_id,tmdb_id" },
-    ),
+    client().from("votes").upsert({ tmdb_id: tmdbId, thumb }, { onConflict: "user_id,tmdb_id" }),
+    VOTES_UNAVAILABLE,
   );
 }
 
 /** Forget a vote, so the film can be recommended again. */
 export function removeVote(tmdbId: number): Promise<void> {
-  return run(client().from("votes").delete().eq("tmdb_id", tmdbId));
+  return run(client().from("votes").delete().eq("tmdb_id", tmdbId), VOTES_UNAVAILABLE);
 }
 ```
 
-**Example** (*expected* output: these haven't run against Supabase yet, because the
-table isn't created and no page calls them until task 6):
+**Example** (*expected* output: no page calls these until task 6):
 ```ts
-await setVote(27205, 1);   // 👍 Inception
-await setVote(27205, -1);  // flip: same row, thumb becomes -1
+await setVote(27205, 1);   // 👍 Inception: insert; the trigger stamps voted_at
+await setVote(27205, -1);  // flip: same row, thumb -1, voted_at re-stamped
 await getVotes();          // → [{ tmdb_id: 27205, thumb: -1, voted_at: "2026-10-…" }]
 await removeVote(27205);   // → getVotes() returns []
 ```
+The paging loop was tested against a simulated server (actual output in "Fourth round").
+`npm run typecheck` and `npm run build` pass.
 
-Verified: `npm run typecheck` and `npm run build` both pass.
-
-### `.github/workflows/deploy.yml` (lines 45–68, new step after "Collect site files")
+### `.github/workflows/deploy.yml` (lines 45–75, new step after "Collect site files")
 
 ```yaml
+      # For You recommender data: the files the browser loads, from the newest data-*
+      # release (built by recommender/prep.py). Kept out of git, so they're added here.
+      # No release yet → skipped, and For You shows its "data unavailable" notice.
+      # The manifest decides what's served: only the files it lists are copied, and the
+      # deploy fails if any is missing, so a broken release can't go live half-uploaded.
+      # The release's .npz/embed_format.json aren't listed, so they're never published.
       - name: Add recommender data
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          tag=$(gh release list --limit 100 --json tagName,publishedAt \
+          tag=$(gh release list --limit 100 --exclude-drafts --exclude-pre-releases --json tagName,publishedAt \
             --jq '[.[] | select(.tagName | startswith("data-"))] | sort_by(.publishedAt) | last | .tagName // empty')
           if [ -z "$tag" ]; then
             echo "No data-* release yet; For You will show its notice."
             exit 0
           fi
-          assets=$(gh release view "$tag" --json assets --jq '.assets[].name')
           mkdir -p _site/data
-          for f in manifest.json vectors.i8 catalogue.json onboarding.json; do
-            if grep -qx "$f" <<<"$assets"; then
-              gh release download "$tag" --dir _site/data --pattern "$f"
-            fi
+          gh release download "$tag" --dir _site/data --pattern manifest.json \
+            || { echo "::error::$tag has no manifest.json"; exit 1; }
+          # Read the list into a variable first: bash -e ignores a failing jq inside a
+          # for-loop's word list, which would deploy a broken manifest with no data files.
+          files=$(jq -er '.files | if type == "object" and length > 0 then .[] else error("no files") end' \
+            _site/data/manifest.json) || { echo "::error::$tag has an invalid manifest.json"; exit 1; }
+          for f in $files; do
+            # Plain file names only: --pattern is a glob, so "*" would publish prep-only files.
+            [[ "$f" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::bad file name in manifest: $f"; exit 1; }
+            gh release download "$tag" --dir _site/data --pattern "$f" \
+              || { echo "::error::$tag is missing $f, which its manifest lists"; exit 1; }
           done
-          test -f _site/data/manifest.json || { echo "$tag has no manifest.json"; exit 1; }
-          echo "Added $tag:"; ls -l _site/data
+          echo "Added $tag (version $(jq -r .version _site/data/manifest.json)):"; ls -l _site/data
 ```
 
-*Why:* the data files stay out of git (spec §3), so they're pulled from the release at
-deploy time. Only the four served files are copied, by name. The prep-only `.npz` files
-and `embed_format.json` stay in the release and never reach the website. No release →
-skip, so deploys can't break (spec risk 6). `onboarding.json` doesn't exist until task 7,
-so missing assets are skipped individually.
+*Why:* the data files stay out of git (spec §3), so they're pulled from the newest
+*published* `data-*` release at deploy time. The manifest decides what's served. Only
+files it lists are copied, so the prep-only `.npz` files and `embed_format.json` never
+reach the site. The deploy **fails** on a malformed manifest, an odd file name, or a
+missing listed file, so the live site keeps its last good version. With no release at all,
+it skips.
 
-**Live test**: the step's script, extracted from the YAML and run locally with
-`GH_REPO=carterbris-1/reel-log bash -e step.sh`:
-
-Before the release existed (actual output):
+**Live test** (actual output, the step's script run locally against your releases):
 ```text
-No data-* release yet; For You will show its notice.
+Added data-2026-10-ac759f25 (version 2026-10-ac759f25):
+-rw-r--r--@ 1 kujo  wheel  1345390 Oct  2 08:49 catalogue.json
+-rw-r--r--@ 1 kujo  wheel      557 Oct  2 08:49 manifest.json
+-rw-r--r--@ 1 kujo  wheel  3325184 Oct  2 08:49 vectors.i8
 exit=0
+manifest.json identical / vectors.i8 identical / catalogue.json identical
 ```
-After the release (actual output):
-```text
-Added data-2026-10:
--rw-r--r--@ 1 kujo  wheel  1345390 Oct  2 08:19 catalogue.json
--rw-r--r--@ 1 kujo  wheel      585 Oct  2 08:19 manifest.json
--rw-r--r--@ 1 kujo  wheel  3325184 Oct  2 08:19 vectors.i8
-exit=0
-vectors.i8 identical      ← cmp against recommender/out/vectors.i8
-```
-Not yet tested on a real Actions runner. That happens on the next deploy after the push.
+Earlier versions' tests (no-release skip, rejecting the old release) are under "Review
+fixes". It hasn't run on a real Actions runner until the push.
 
-### `CODE_GUIDE.md` (+12)
+### `CODE_GUIDE.md` (+20)
 
-It adds the three vote functions to the `db.ts` table, a paragraph on `votes` under
-`schema.sql`, and the data step in the `deploy.yml` diagram and bullets. *Why:* the guide
-documents every function, table, and deploy step, so it stays accurate.
+It documents the three vote functions (including paging), the `votes` table and its trigger,
+the vote error message, and the deploy step: manifest-driven, fails on missing files,
+ignores drafts and pre-releases, and you run `gh workflow run deploy.yml` after publishing
+a release.
 
-## The release: `data-2026-10`
+## The releases
 
 https://github.com/carterbris-1/reel-log/releases/tag/data-2026-10, tagged on `main`, with
 6 assets:
@@ -481,20 +561,23 @@ the licence risk for personal use (spec risk 2).
 
 ## How it was built
 
-- **Copy files by name instead of `--pattern '*.json'`.** A pattern would also have
-  published `embed_format.json`, and `gh release download` errors when a pattern matches
-  nothing, which would break the deploy until `onboarding.json` exists.
-- **"Newest" means newest by `publishedAt`**, not tag name. (This first used `createdAt`,
-  which turned out to be wrong; see "Review fixes → Fix 7".)
+- **Manifest-driven copy.** It first copied four hard-coded names. Review rounds turned it
+  into "copy exactly what the manifest lists, and fail if anything is missing or odd", so
+  a half-uploaded release can't go live.
+- **"Newest" means newest by `publishedAt`.** It first used `createdAt`, which for a release
+  is the tagged commit's date. Both releases tag the same commit, so they tied and the old
+  one won ("Fix 7").
 - **`GH_REPO` is set explicitly**, so `gh` doesn't depend on the checkout's git remote.
-- ~~**`setVote` sets `voted_at` explicitly.**~~ Replaced by the server trigger in "Review
-  fixes → Fix 5": `setVote` no longer sends a time.
-- **Commits.** You approved two commits plus the release command. I ran the commits; the
-  release was blocked and run by you. The push is pending its review (CLAUDE.md).
+- **Server-side `voted_at`.** It was first sent from the device; a trigger replaced that.
+- **No release-triggered deploy.** That run would build the tag's commit, and both data tags
+  point at `3dc6800`, so it would roll back the site's code.
+- **Commits and release.** You approved each commit. The first release was blocked by
+  Claude Code's auto-mode check, so you ran both `gh release create` commands yourself.
 
 ## How to try it
 
-1. Supabase → **SQL Editor → New query** → paste all of `supabase/schema.sql` → **Run**.
+1. Supabase → **SQL Editor → New query** → paste all of `supabase/schema.sql` → **Run**
+   (you reported doing this on 2026-10-02).
 2. After the push deploys, open
    `https://carterbris-1.github.io/reel-log/data/manifest.json`. Expected: the manifest,
    with `"count": 12989`. It works on iPhone Safari too, but there's nothing visual to see
@@ -505,6 +588,10 @@ the licence risk for personal use (spec risk 2).
 ---
 
 # Review fixes (before the first push)
+
+> **History.** These sections record each review round in order. Line numbers and code
+> here are as of that round, and later rounds changed some of them. The final code is in
+> the "Task 3 → Changed files" and "New files" sections above.
 
 The pre-push review ran the `code-reviewer` agent and `/code-review high` (in a separate
 session) on `origin/main..4cae719`. There were no critical findings, and six "should change"
@@ -553,7 +640,7 @@ deploys would get through until then.
 ### Fixes 2 and 3: `recommender/prep.py`
 
 ```python
-# recommender/prep.py:250-259
+# recommender/prep.py:259-268
 def data_version(*files: bytes) -> str:
     """"2026-10-1a2b3c4d": month + a hash of the published bytes.
 
