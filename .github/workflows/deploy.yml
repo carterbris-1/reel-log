@@ -67,6 +67,8 @@ jobs:
           files=$(jq -er '.files | if type == "object" and length > 0 then .[] else error("no files") end' \
             _site/data/manifest.json) || { echo "::error::$tag has an invalid manifest.json"; exit 1; }
           for f in $files; do
+            # Plain file names only: --pattern is a glob, so "*" would publish prep-only files.
+            [[ "$f" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::bad file name in manifest: $f"; exit 1; }
             gh release download "$tag" --dir _site/data --pattern "$f" \
               || { echo "::error::$tag is missing $f, which its manifest lists"; exit 1; }
           done

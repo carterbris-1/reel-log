@@ -75,7 +75,10 @@ def movielens() -> Path:
         tmp.rename(zip_path)
     with zipfile.ZipFile(zip_path) as z:
         for name in ML_FILES:
-            (out / name).write_bytes(z.read(f"ml-25m/{name}"))
+            # .part then rename: an interrupted write must not look like a finished cache
+            part = out / f"{name}.part"
+            part.write_bytes(z.read(f"ml-25m/{name}"))
+            part.rename(out / name)
     zip_path.unlink()  # 250 MB we no longer need; the disk is tight
     return out
 
@@ -387,14 +390,15 @@ def stage_vectors() -> None:
         "title": movies["title"].to_list(),
         "year": years.to_list(),
         "genres": [int(b) for b in bits],
-        "pop": [round(p, 2) for p in movies["popularity"].fill_null(0).to_list()],
+        "pop": [round(p, 2) for p in movies["popularity"].fill_nan(0).fill_null(0).to_list()],
         "votes": [int(v) for v in movies["vote_count"].to_list()],
-        "rating": [round(r, 1) for r in movies["vote_average"].fill_null(0).to_list()],
+        "rating": [round(r, 1) for r in movies["vote_average"].fill_nan(0).fill_null(0).to_list()],
         "poster": movies["poster_path"].to_list(),
         "genome": [int(b) for b in has_g],
         "director": movies["director"].to_list(),
     }
-    cat_bytes = json.dumps(catalogue, ensure_ascii=False, separators=(",", ":")).encode()
+    # allow_nan=False: a bare NaN isn't JSON, and the browser's JSON.parse would reject the file.
+    cat_bytes = json.dumps(catalogue, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
     (OUT / "catalogue.json").write_bytes(cat_bytes)
     manifest = {
         "version": data_version(q.tobytes(), cat_bytes), "count": n, "dims": DIMS, "scale": 1 / s,
@@ -403,7 +407,7 @@ def stage_vectors() -> None:
         "files": {"vectors": "vectors.i8", "catalogue": "catalogue.json"},
         "bytes": {"vectors": q.nbytes, "catalogue": len(cat_bytes)},
     }
-    (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2, allow_nan=False))
     log(
         f"wrote vectors.i8 ({q.nbytes / 1e6:.1f} MB), catalogue.json ({len(cat_bytes) / 1e6:.1f} MB, "
         f"{len(gzip.compress(cat_bytes)) / 1e6:.1f} MB gzipped), manifest.json"

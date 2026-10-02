@@ -117,18 +117,20 @@ const VOTE_PAGE = 1000;
 /** Every 👍/👎, newest first (History page and the recommender's training set). */
 export async function getVotes(): Promise<Vote[]> {
   const votes: Vote[] = [];
-  for (let from = 0; ; from += VOTE_PAGE) {
+  // Advance by what actually came back, not VOTE_PAGE: a smaller server cap returns
+  // fewer rows, and jumping 1,000 ahead would skip the rest. Stop on an empty page.
+  for (;;) {
     const page = await run<Vote[]>(
       client()
         .from("votes")
         .select("tmdb_id, thumb, voted_at")
         .order("voted_at", { ascending: false })
         .order("tmdb_id") // ties need a fixed order, or pages could overlap
-        .range(from, from + VOTE_PAGE - 1),
+        .range(votes.length, votes.length + VOTE_PAGE - 1),
       VOTES_UNAVAILABLE,
     );
+    if (page.length === 0) break;
     votes.push(...page);
-    if (page.length === 0) break; // not `< VOTE_PAGE`: the server's cap may be smaller
   }
   // A vote from another device between two pages shifts rows, so one could appear twice.
   const seen = new Set<number>();

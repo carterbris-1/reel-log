@@ -246,8 +246,8 @@ on cards, and syncing cooldown through Supabase.
 ### Phase D: Monthly freshness
 15. **Embedding format** (§5.3). ✅ Folded into task 2: `embed_format.json` written.
 16. **`update.py` and monthly workflow** (R2, §5.6). Depends on 2, 7. *Done when:* a
-    manual `workflow_dispatch` publishes `data-<version>` with last month's releases, the
-    site redeploys on its own, and the browser picks up the new version on its next load.
+    manual `workflow_dispatch` publishes `data-<version>` with last month's films, then runs
+    `deploy.yml` itself (risk 7), and the browser loads the new version next time.
 
 ## 8. Risks and gotchas
 

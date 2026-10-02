@@ -736,3 +736,55 @@ by both reviewers. The others:
 `data version 2026-10-ac759f25 → publish as release data-2026-10-ac759f25`, which is
 unchanged, so the published release stays valid. The deploy step against the live releases
 prints `Added data-2026-10-ac759f25 (version 2026-10-ac759f25):`. `npm run typecheck` passes.
+
+### Fourth round (final review of all four commits)
+
+The `code-reviewer` agent found a bug introduced in `aa72a86`. `getVotes` stopped only on an
+empty page, but still moved its offset by 1,000. Under a server cap of 500 it fetched rows
+0–499, then 1,000–1,999, silently skipping 500–999. That's the exact case the change was
+meant to handle.
+
+**Fix** (`src/db.ts`, `getVotes`): the offset is now the number of rows collected so far.
+```ts
+  for (;;) {
+    const page = await run<Vote[]>(
+      client()
+        .from("votes")
+        .select("tmdb_id, thumb, voted_at")
+        .order("voted_at", { ascending: false })
+        .order("tmdb_id") // ties need a fixed order, or pages could overlap
+        .range(votes.length, votes.length + VOTE_PAGE - 1),
+      VOTES_UNAVAILABLE,
+    );
+    if (page.length === 0) break;
+    votes.push(...page);
+  }
+```
+
+**Test**: the same loop against a simulated server that caps rows per request (actual output):
+```text
+n=0 cap=1000: got 0, in order=true, requests=1
+n=700 cap=500: got 700, in order=true, requests=3
+n=2500 cap=1000: got 2500, in order=true, requests=4
+n=2000 cap=1000: got 2000, in order=true, requests=3
+n=1234 cap=300: got 1234, in order=true, requests=6
+```
+The agent's other note (the deploy's `jq` guard accepts non-string values in `files`) was
+kept: `prep.py` always writes strings, and a bad value still fails at the download.
+
+`/code-review high` (separate session) on the same four commits found eight items:
+
+| Found | Decision |
+|---|---|
+| `catalogue.json` could contain a bare `NaN` (not valid JSON) if a source value were NaN | **Guarded:** `fill_nan(0)` plus `json.dumps(..., allow_nan=False)`, so prep fails instead of writing it. Checked: the current file parses as strict JSON in Python and `JSON.parse`, and the source columns have 0 NaN. The one "NaN/Infinity" text match is a film title |
+| An interrupted MovieLens extract leaves a truncated CSV that later runs treat as cached | **Fixed:** write `.part`, then rename |
+| Manifest names are used as `gh --pattern` globs, so `*` would publish prep-only files | **Fixed:** the deploy accepts only `^[A-Za-z0-9._-]+$`. Tested: `vectors.i8` allowed; `*`, `a b`, `../x` rejected |
+| Spec task 16 said the site "redeploys on its own" | **Fixed:** it runs `deploy.yml` itself (risk 7) |
+| Offset paging can skip a vote that moves during loading | **Kept** (already listed): needs >1,000 votes plus a concurrent vote |
+| Stopping only on an empty page costs one extra request per load | **Kept:** about one round trip. The alternative (a row count) needs `run()` to return counts. Revisit if History feels slow |
+| The deploy ships the newest data whatever code is built; no code↔data format pin | **Follow-up:** add a format number to the manifest when task 7 changes the format, and have the worker refuse a newer one |
+| Repeated full argsorts | **Kept:** speed only |
+
+After these, `--stage vectors` still gives `data version 2026-10-ac759f25`, so the published
+release stays valid. The deploy step against the live releases prints
+`Added data-2026-10-ac759f25 (version 2026-10-ac759f25):`.
