@@ -6,3 +6,10 @@ js/
 _site/
 
 .DS_Store
+
+# Recommender prep: Python env, downloads, and intermediate/output data (published as releases)
+recommender/.venv/
+recommender/cache/
+recommender/work/
+recommender/out/
+__pycache__/
